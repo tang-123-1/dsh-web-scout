@@ -1,10 +1,10 @@
 # web-scout · DeepSeek Harness 联网检索插件
 
-> 按对话内容自动联网检索，46 个平台后端，站内搜索、登录态复用、可拖动缩放的结果面板。
-> A conversation-aware web search plugin for [DeepSeek Harness](https://github.com/deepseek-ai) (Cordis bundle). 46 platform backends, native in-site search, cookie-based login reuse, a draggable/resizable result panel.
+> 按对话内容自动联网检索，47 个平台后端，站内搜索、登录态复用、缓存、可拖动缩放的结果面板，并可作为 MCP 服务被任意宿主调用。
+> A conversation-aware web search plugin for [DeepSeek Harness](https://github.com/deepseek-ai) (Cordis bundle). 47 platform backends, native in-site search, cookie-based login reuse, a two-level cache, a draggable/resizable result panel — and an MCP server for any host.
 
 ![许可证](https://img.shields.io/badge/license-MIT-blue.svg)
-![版本](https://img.shields.io/badge/version-1.6.0-informational.svg)
+![版本](https://img.shields.io/badge/version-1.16.0-informational.svg)
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)
 
 ---
@@ -51,6 +51,9 @@
 - **面板可拖动、可缩放**，位置记在 `localStorage['web-scout-panel-rect']`；`打开` 交给系统默认浏览器。
 - **按站点类型出卡片**（v1.9）：视频 / 文章 / 问答 / 论坛 / 榜单 / 商品 / 代码 / 文档 / 动态 / 网页十类，卡片带类型标签与缩略图；自定义站点按填写的类型或域名自动套用。
 - **面板内直接播 B 站视频**（v1.9）：结果行出现「播放」→ 面板里展开嵌入式播放器（`player.bilibili.com`），不用跳浏览器。
+- **两级缓存**（v1.14）：内存 LRU + SQLite（`~/.dsh/web-scout-cache.db`），搜索与正文读取都缓存，命中时 `cached:true` 并给出缓存年龄；面板有「刷新」按钮与「缓存 Ns」徽标，`cacheTtlMs` 可配（60s–24h）。
+- **可插拔 Provider**（v1.15）：内置 46 个后端与外部 provider 走同一接口，把 `*.mjs` 丢进 `<profile>/web-scout-providers/` 就能加站，`provider.reload` 热加载，坏文件只丢自己。
+- **MCP 服务**（v1.16）：`node mcp/server.mjs` 起一个标准 MCP 服务（三个工具、协议 2025-06-18 / 2025-03-26 / 2024-11-05），Claude Desktop / Cursor / 自写脚本都能用；与面板共享配置、缓存与外部 provider。
 - **纯 Node 实现，零运行时依赖**：不用 `npm install`，HTTP/TLS/压缩/WebSocket 全部用 `node:http`、`node:tls`、`node:zlib`、全局 `WebSocket`。
 
 ## 安装
