@@ -71,7 +71,9 @@ plugin_manager action=install_bundle target=D:/dshcs/web-scout
 
 ### 方式 B：手动改 profile（不推荐，容易出错）
 
-参考 `plugin_manager` 的产物：`dependencies` 加 `link:` 依赖、`dsh.profile.bundles` 追加包名，然后重启 DSH。**不要**手写 `cordis.patch.yml` 的 `insert` 行——`dsh.profile.bundles` 已经够了，重复行会导致 `client-modules: package resolves from multiple active Loader sources`。
+参考 `plugin_manager` 的产物，只改两处：`dependencies` 加 `"@local/web-scout": "link:<仓库绝对路径>"`，`dsh.profile.bundles` 末尾追加 `"@local/web-scout"`，然后重启 DSH。
+
+> 本包自带的 `cordis.patch.yml`（一行 `insert`，id `web-scout`）由安装器读取，用来生成配置行 `include:web-scout`——**不要**把它手抄进 profile 的 `cordis.patch.yml`。同一个包在两个 Loader 源里出现会直接报 `client-modules: package @local/web-scout resolves from multiple active Loader sources`，那样客户端半永远加载不出来。
 
 ### 安装后必做两件事
 
