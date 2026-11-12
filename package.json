@@ -1,0 +1,73 @@
+{
+  "name": "@local/web-scout",
+  "version": "1.6.0",
+  "private": true,
+  "type": "module",
+  "description": "对话感知的联网检索插件：39 个平台后端、站内搜索、插件自管浏览器登录、可拖动缩放的结果面板。",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "web-search",
+    "search-engine",
+    "zhihu",
+    "bilibili",
+    "toutiao",
+    "v2ex"
+  ],
+  "license": "MIT",
+  "author": "[YOUR_NAME]",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/[GITHUB_OWNER]/web-scout.git"
+  },
+  "homepage": "https://github.com/[GITHUB_OWNER]/web-scout#readme",
+  "bugs": {
+    "url": "https://github.com/[GITHUB_OWNER]/web-scout/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "api.js",
+    "store.js",
+    "open.js",
+    "engines.js",
+    "net.js",
+    "login.js",
+    "browserCookies.js",
+    "browserAuth.js",
+    "client.js",
+    "locale/zh.json",
+    "locale/en.json",
+    "icon.svg",
+    "README.md",
+    "cordis.patch.yml",
+    "CHANGELOG.md",
+    "LICENSE",
+    "scripts/smoke.mjs"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+# 依赖与构建产物
+node_modules/
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# 本地抓取/调试脚本（不属于插件运行时）
+_probe/
+*.local.mjs
+
+# 运行时产物
+*.log
+coverage/
+dist/
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 个人配置（绝不入库：里面可能有登录 Cookie）
+web-scout.json
+session.json

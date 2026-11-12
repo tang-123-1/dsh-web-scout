@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "title": "Web scout",
+    "description": "Search the web from conversation context or named platforms, and open results in the desktop browser"
+  },
+  "dock": {
+    "title": "Web scout",
+    "placeholder": "Search anything… (empty = use this conversation)",
+    "search": "Search",
+    "searching": "Searching",
+    "panel": "Results"
+  }
+}

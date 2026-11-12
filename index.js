@@ -1,0 +1,419 @@
+import {
+  platformCatalog,
+  inferPlatforms,
+  cleanQuery,
+  resolvePlatforms,
+  contextQuery,
+  runSearch,
+  readPage,
+  browserUrlFor,
+} from './engines.js';
+import { openInBrowser } from './open.js';
+import { ScoutStore } from './store.js';
+import { createApi } from './api.js';
+
+export const name = 'web-scout';
+export const inject = ['tools', 'webServer'];
+
+const PACKAGE_NAME = '@local/web-scout';
+const JSON_OBJECT = { type: 'object', additionalProperties: true };
+const ROUTE_PATH = '/web-scout/api';
+
+const blocks = (value) => [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }];
+
+function plainText(message) {
+  if (!message) return '';
+  if (typeof message.text === 'string') return message.text;
+  const content = message.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block) => (block && block.type === 'text' && typeof block.text === 'string' ? block.text : ''))
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** Read the live transcript of the calling session (best effort: every step is optional). */
+function transcript(ctx, exec) {
+  const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : undefined;
+  const agents = typeof ctx.get === 'function' ? ctx.get('agents') : undefined;
+  let id = exec && exec.agent ? exec.agent.id : undefined;
+  if (!id && agents && typeof agents.currentInitiator === 'function') {
+    const current = agents.currentInitiator();
+    id = current ? current.id : undefined;
+  }
+  if (!sessions || typeof sessions.get !== 'function' || !id) return { id, messages: [] };
+  try {
+    const session = sessions.get(id);
+    const messages = session && typeof session.deriveMessages === 'function' ? session.deriveMessages() : [];
+    return { id, messages: Array.isArray(messages) ? messages : [] };
+  } catch {
+    return { id, messages: [] };
+  }
+}
+
+function conversationText(messages, count = 6) {
+  const rows = [];
+  for (let index = messages.length - 1; index >= 0 && rows.length < count; index -= 1) {
+    const message = messages[index];
+    const role = message && message.role;
+    if (role !== 'user' && role !== 'assistant') continue;
+    const text = plainText(message).trim();
+    if (text !== '') rows.unshift(`${role}: ${text.slice(0, 600)}`);
+  }
+  return rows.join('\n');
+}
+
+function firstBrowserUrl(result) {
+  const found = result.results.find((item) => /^https?:\/\//i.test(item.url));
+  return found ? found.url : '';
+}
+
+function searchReport(value) {
+  const lines = [];
+  const platforms = value.platforms || [];
+  lines.push(`搜索「${value.query}」 · 平台：${platforms.map((entry) => entry.label).join('、') || '无'} · 命中 ${value.results.length} 条`);
+  value.results.slice(0, 8).forEach((item, index) => {
+    lines.push(`${index + 1}. [${item.platformLabel}] ${item.title}`);
+    lines.push(`   ${item.url}`);
+    if (item.snippet) lines.push(`   ${item.snippet.replace(/\s+/g, ' ').slice(0, 160)}`);
+  });
+  const status = platforms.map((entry) => {
+    const suffix = entry.note && entry.note !== `${entry.note}` ? ` ${entry.note}` : '';
+    return `${entry.label}:${entry.status}${entry.count ? `/${entry.count}` : ''}${entry.status === 'ok' ? '' : suffix}`;
+  });
+  lines.push(`平台状态：${status.join('、')}`);
+  const blocked = platforms.filter((entry) => entry.status !== 'ok');
+  if (blocked.length > 0) {
+    lines.push('浏览器入口：');
+    blocked.slice(0, 4).forEach((entry) => lines.push(`- ${entry.label}: ${entry.browser}`));
+  }
+  if (value.tunnelSuggested) lines.push('提示：部分站点在直连环境不可达，可用 web_scout_open 在桌面浏览器打开，或使用 /web-scout 面板设置代理。');
+  return lines.join('\n');
+}
+
+export function apply(ctx, config = {}) {
+  const store = new ScoutStore(config.file);
+  const defaults = {
+    limit: Number(config.limit) || 12,
+    timeoutMs: Number(config.timeoutMs) || 12000,
+    maxPlatforms: Number(config.maxPlatforms) || 10,
+    defaultPlatforms: Array.isArray(config.defaultPlatforms) && config.defaultPlatforms.length > 0 ? config.defaultPlatforms : ['bing', 'so360', 'csdn', 'juejin', 'toutiao', 'v2ex', 'zhihu', 'bilibili', 'weixin'],
+  };
+  const ready = store.load().catch(() => {});
+
+  async function settings() {
+    await ready;
+    return store.snapshot();
+  }
+
+  /** Host-side view of the client-modules table (the service that serves the dock bundle). */
+  function clientModules() {
+    try {
+      return typeof ctx.get === 'function' ? ctx.get('clientModules') : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function clientGraph() {
+    const modules = clientModules();
+    if (!modules || typeof modules.graph !== 'function') return { available: false, package: PACKAGE_NAME };
+    let clientPath;
+    try {
+      clientPath = typeof modules.clientPath === 'function' ? modules.clientPath(PACKAGE_NAME) : undefined;
+    } catch {
+      clientPath = undefined;
+    }
+    let rev = '';
+    let entries = [];
+    try {
+      const graph = modules.graph();
+      rev = (graph && graph.rev) || '';
+      entries = Array.isArray(graph && graph.entries) ? graph.entries.map((entry) => entry.id) : [];
+    } catch {
+      /* ignore */
+    }
+    return {
+      available: true,
+      package: PACKAGE_NAME,
+      composed: Boolean(clientPath),
+      clientPath: clientPath || null,
+      has: entries.includes(PACKAGE_NAME),
+      rev,
+      count: entries.length,
+      tail: entries.slice(-6),
+    };
+  }
+
+  /**
+   * A bundle installed into an already-running host can miss the client-modules
+   * reconciliation (its flush reruns only for Loader events), which leaves the
+   * dock with no served client bundle at all. Push our own name through the same
+   * incremental path the scan uses.
+   */
+  function healClientModules() {
+    const modules = clientModules();
+    if (!modules || typeof modules.flush !== 'function') return false;
+    try {
+      if (typeof modules.clientPath === 'function' && modules.clientPath(PACKAGE_NAME)) return true;
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (!modules.dirty || typeof modules.dirty.add !== 'function') return false;
+      modules.dirty.add(PACKAGE_NAME);
+      modules.flush((error) => {
+        try {
+          ctx.logger?.warn?.('web-scout: client-modules flush: %s', String((error && error.message) || error));
+        } catch {
+          /* ignore */
+        }
+      });
+    } catch (error) {
+      try {
+        ctx.logger?.warn?.('web-scout: client-modules heal: %s', String((error && error.message) || error));
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      if (modules.clientPath && modules.clientPath(PACKAGE_NAME) && typeof modules.rebuilt === 'function') {
+        modules.rebuilt(PACKAGE_NAME);
+      }
+    } catch (error) {
+      try {
+        ctx.logger?.warn?.('web-scout: client-modules rebuilt: %s', String((error && error.message) || error));
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      return Boolean(modules.clientPath && modules.clientPath(PACKAGE_NAME));
+    } catch {
+      return false;
+    }
+  }
+
+  const api = createApi({
+    store,
+    defaults,
+    clientGraph,
+    readMessages: (sessionId) => {
+      const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : undefined;
+      if (!sessions || typeof sessions.get !== 'function') return [];
+      try {
+        const session = sessions.get(sessionId);
+        const messages = session && typeof session.deriveMessages === 'function' ? session.deriveMessages() : [];
+        return Array.isArray(messages) ? messages : [];
+      } catch {
+        return [];
+      }
+    },
+  });
+
+  ctx.effect(() =>
+    ctx.webServer.register({
+      kind: 'exact',
+      path: ROUTE_PATH,
+      handler: api.handler,
+    }),
+  );
+
+  ctx.effect(() => {
+    const timers = [0, 300, 1200, 3000].map((delay) => setTimeout(() => healClientModules(), delay));
+    return () => timers.forEach((timer) => clearTimeout(timer));
+  });
+
+  const systemPrompt = typeof ctx.get === 'function' ? ctx.get('systemPrompt') : undefined;
+  if (systemPrompt && typeof systemPrompt.section === 'function') {
+    ctx.effect(() =>
+      systemPrompt.section({
+        name: 'web-scout',
+        order: 62,
+        text: [
+          '## web-scout（联网检索）',
+          '- 当用户要求「搜一下/查一下/看看网上怎么说」，或需要平台内检索（知乎、B站、CSDN、掘金、GitHub、小红书、淘宝……）时，调用 `web_scout_search`。',
+          '- `web_scout_search` 会从当前对话自动提取检索词（`query` 可省略），并自动识别用户提到的平台；`platforms` 可显式指定。',
+          '- 直连环境常见不可达站点（Google、YouTube、Wikipedia、Reddit 等）会返回 `blocked`/`error` 状态与浏览器入口，此时用 `web_scout_open` 在桌面浏览器打开。',
+          '- 需要正文时用 `web_scout_read` 抓取单页正文，再作答并给出链接。',
+        ].join('\n'),
+      }),
+    );
+  }
+
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'web_scout_search',
+      description:
+        'Search the web (Bing/360 + platform-scoped: 知乎、CSDN、掘金、B站、GitHub、小红书、淘宝等). Query can be omitted: it is derived from the current conversation. Returns titles, URLs, snippets, per-platform status, and browser fallback URLs.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search keywords. Omit to derive from the current conversation.' },
+          platforms: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Platform ids or Chinese names: bing, so360, zhihu, bilibili, csdn, juejin, github, xiaohongshu, weibo, douyin, taobao, jd, zhihu, wikipedia, npm, stackoverflow ... "auto" expands to defaults.',
+          },
+          limit: { type: 'number', description: 'Results per platform (1-30).' },
+        pages: { type: 'number', description: 'Pages fetched per backend (1-4, default 2).' },
+          timeoutMs: { type: 'number', description: 'Per-platform timeout in ms (3000-30000).' },
+          context: { type: 'string', description: 'Conversation text to derive the query from when `query` is empty.' },
+          open: { type: 'boolean', description: 'Open the first result in the desktop browser.' },
+        },
+        required: [],
+      },
+      output: {
+        schema: JSON_OBJECT,
+        render: (_args, value) => blocks(searchReport(value)),
+        presentationMeta: (args, value) => ({ query: value && value.query, count: value && value.results ? value.results.length : 0 }),
+      },
+      presentCall: (args) => ({
+        card: 'generic',
+        title: args && args.query ? `联网检索：${args.query}` : '联网检索（按对话内容推断）',
+        kind: 'search',
+        rawInput: args,
+      }),
+      presentResult: (_args, result) => {
+        const value = result && result.value ? result.value : undefined;
+        if (!value || !Array.isArray(value.results)) return { card: 'generic', title: '联网检索完成' };
+        return {
+          card: 'web',
+          kind: 'search',
+          title: `搜索「${value.query}」`,
+          sources: value.results.slice(0, 12).map((item) => ({ url: item.url, title: item.title, snippet: item.snippet })),
+          truncated: value.results.length > 12,
+        };
+      },
+      execute: async (args, exec) => {
+        const options = args && typeof args === 'object' ? args : {};
+        const current = await settings();
+        const hint = transcript(ctx, exec);
+        const messages = hint.messages;
+        const conversation = conversationText(messages);
+        let query = cleanQuery(options.query || '');
+        if (query === '') query = contextQuery(messages, options.context || '');
+        if (query === '') throw new Error('未提供查询词，也无法从当前对话推断');
+        const hinted = inferPlatforms(`${options.query || ''} ${conversation} ${options.context || ''}`);
+        const platforms = resolvePlatforms(
+          Array.isArray(options.platforms) && options.platforms.length > 0 ? options.platforms : ['auto'],
+          current.defaultPlatforms.length > 0 ? current.defaultPlatforms : defaults.defaultPlatforms,
+          hinted,
+        ).slice(0, current.maxPlatforms || defaults.maxPlatforms);
+        const limit = Math.min(20, Math.max(1, Number(options.limit) || current.limit || defaults.limit));
+        const timeoutMs = Math.min(30000, Math.max(3000, Number(options.timeoutMs) || current.timeoutMs || defaults.timeoutMs));
+        const result = await runSearch({
+      query,
+      platforms,
+      limit,
+      timeoutMs,
+      proxy: current.proxy || undefined,
+      cookies: current.cookies || {},
+    });
+        store.record({
+          at: new Date().toISOString(),
+          query: result.query,
+          platforms: result.platforms.map((entry) => entry.id),
+          count: result.results.length,
+          top: result.results.slice(0, 3).map((item) => ({ title: item.title, url: item.url })),
+          origin: 'tool',
+          session: hint.id,
+        });
+        const opened = options.open === true ? openInBrowser(firstBrowserUrl(result) || result.platforms[0]?.browser || 'https://www.bing.com') : undefined;
+        return {
+          query: result.query,
+          mode: result.mode,
+          sessionId: hint.id || null,
+          platforms: result.platforms.map((entry) => ({
+            id: entry.id,
+            label: entry.label,
+            status: entry.status,
+            note: entry.note,
+            count: entry.count,
+            browser: entry.browser,
+            backend: entry.backend,
+          })),
+          results: result.results.slice(0, Math.max(limit * platforms.length, 12)),
+          blocked: result.blocked,
+          tunnelSuggested: result.tunnelSuggested,
+          opened: opened || null,
+        };
+      },
+    }),
+  );
+
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'web_scout_open',
+      description:
+        'Open a URL (or a platform search page) in the user\'s desktop browser. Use when a site is unreachable from the server side, or the user wants to look at results themselves.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL to open. Takes precedence over platform/query.' },
+          platform: { type: 'string', description: 'Platform id, e.g. zhihu / bilibili / taobao.' },
+          query: { type: 'string', description: 'Keywords for the platform search page.' },
+        },
+        required: [],
+      },
+      output: {
+        schema: JSON_OBJECT,
+        render: (_args, value) => blocks(`已在桌面浏览器打开：${value.url}\n${value.command}`),
+      },
+      presentCall: (args) => ({ card: 'generic', title: `打开浏览器：${(args && (args.url || args.platform)) || '默认搜索'}`, kind: 'fetch', rawInput: args }),
+      presentResult: () => ({ card: 'generic', title: '已调用桌面浏览器' }),
+      execute: async (args) => {
+        const options = args && typeof args === 'object' ? args : {};
+        let url = String(options.url || '').trim();
+        if (url === '') {
+          const platform = String(options.platform || 'bing');
+          url = browserUrlFor(platform, cleanQuery(options.query || '') || String(options.query || ''));
+        }
+        return openInBrowser(url);
+      },
+    }),
+  );
+
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'web_scout_read',
+      description: 'Fetch one web page and return its readable text (title, status, truncated flag). Goes through the configured proxy, unlike a bare fetch.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'http(s) URL to read.' },
+          maxChars: { type: 'number', description: 'Max characters of extracted text (500-20000, default 6000).' },
+        },
+        required: ['url'],
+      },
+      output: {
+        schema: JSON_OBJECT,
+        render: (_args, value) => blocks(`# ${value.title || value.url}\n${value.url} · HTTP ${value.status} · ${value.chars} chars${value.truncated ? '（已截断）' : ''}\n\n${value.text}`),
+      },
+      presentCall: (args) => ({ card: 'generic', title: `读取网页：${args && args.url}`, kind: 'fetch', rawInput: args }),
+      presentResult: (_args, result) => {
+        const value = result && result.value ? result.value : {};
+        return { card: 'web', kind: 'fetch', title: value.title || value.url, url: value.url || '', statusCode: value.status || 0, truncated: Boolean(value.truncated) };
+      },
+      execute: async (args) => {
+        const options = args && typeof args === 'object' ? args : {};
+        const current = await settings();
+        return readPage({
+      url: options.url,
+      maxChars: options.maxChars,
+      proxy: current.proxy || undefined,
+      timeoutMs: current.timeoutMs,
+      cookies: current.cookies || {},
+    });
+      },
+    }),
+  );
+
+  return {
+    store,
+    route: ROUTE_PATH,
+    catalog: platformCatalog,
+  };
+}
+// hmr probe 2026-11-12T10:57:31.1540506+08:00

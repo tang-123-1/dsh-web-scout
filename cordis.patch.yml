@@ -1,0 +1,4 @@
+- insert:
+    - id: web-scout
+      name: '@local/web-scout'
+      config: {}
