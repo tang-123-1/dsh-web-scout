@@ -2,6 +2,29 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
+## 1.16.0 — 2026-11-13
+
+**为什么改**：路线图第 3 步。插件的能力此前只对 DSH 内部可见（三个 agent 工具 + 面板 HTTP op）；要让别的宿主（Claude Desktop、Cursor、自己的脚本）也能用同一套检索，必须走标准协议。
+
+### 新增
+- `mcp/server.mjs`：零依赖的 MCP 服务，JSON-RPC 2.0 over stdio。支持协议 `2025-06-18` / `2025-03-26` / `2024-11-05`（客户端要新版本就回新版本，未知版本回落 `2024-11-05`），既能吃换行分隔 JSON（MCP 官方 stdio），也兼容 LSP 式 `Content-Length` 帧。
+- 三个工具：
+  - `web_scout_search`：`query`（榜单类可空）、`platforms`、`limit`、`pages`、`timeoutMs`、`refresh`；返回 `content[].text`（人读的清单）+ `structuredContent`（query/platforms/results/cached…）。
+  - `web_scout_read`：`url`、`maxChars`；正文 + 标题 + 状态 + 是否截断 + 缓存命中信息。
+  - `web_scout_providers`：平台/provider 清单、默认源、代理、缓存 TTL。
+- 与面板完全共享配置（`~/.dsh/web-scout.json`）与缓存（`web-scout-cache.db`，WAL 支持多进程）；外部 provider（`<profile>/web-scout-providers/*.mjs`）在 MCP 侧同样可用。
+- `cache.forget(key)`：refresh 需要的单条失效（此前只能整表 clear）。
+
+### 验收
+- `_probe/verify-mcp.mjs` **24/24**：握手/版本协商/ping/工具清单/未知工具/缺 query/providers/搜索/二次命中缓存/refresh 绕过/正文读取与缓存/非 http url/未知方法 -32601/坏 JSON 后仍存活/榜单空 query。
+- `_probe/verify-mcp-robust.mjs` **10/10**：并发流水线 id 对齐、stdout 无非 JSON 噪音、stderr 有诊断、批量数组请求、stdin 关闭后 exit code 0、Content-Length 帧。
+- `_probe/verify-mcp-tools.mjs` **7/7**：外部 provider `wsdemo` 可搜、未知平台回落默认源、`timeoutMs` 钳位、providers 负载字段、不可达域名返回 isError。
+
+### 用法
+```json
+{ "mcpServers": { "web-scout": { "command": "node", "args": ["D:/dshcs/web-scout/mcp/server.mjs"] } } }
+```
+
 ## 1.15.0 — 2026-11-13
 
 **为什么改**：路线图第 2 步。`engines.js` 已经长到 2100 行，加一个站点要改核心文件、还要小心别碰坏翻页/过滤/缓存；谁想接自己的站都得读完整份源码。后端必须能被「外挂」。

@@ -1,6 +1,6 @@
 {
   "name": "@local/web-scout",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "private": true,
   "type": "module",
   "description": "对话感知的联网检索插件：39 个平台后端、站内搜索、插件自管浏览器登录、可拖动缩放的结果面板。",
@@ -30,13 +30,15 @@
     "node": ">=22"
   },
   "scripts": {
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "mcp": "node mcp/server.mjs"
   },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
-    "./icon": "./icon.svg"
+    "./icon": "./icon.svg",
+    "./mcp": "./mcp/server.mjs"
   },
   "files": [
     "index.js",
@@ -60,7 +62,8 @@
     "scripts/smoke.mjs",
     "providers/registry.js",
     "providers/external.js",
-    "providers/example-provider.mjs"
+    "providers/example-provider.mjs",
+    "mcp/server.mjs"
   ],
   "dsh": {
     "bundle": {
@@ -73,5 +76,8 @@
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
+  },
+  "bin": {
+    "web-scout-mcp": "./mcp/server.mjs"
   }
 }

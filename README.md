@@ -239,6 +239,51 @@ curl -s -X POST http://127.0.0.1:3209/web-scout/api -H "content-type: applicatio
 
 ![外部 provider 出现在站点网格里（最后一项「示例站点」）](docs/panel-providers.png)
 
+### MCP 服务（v1.16）
+
+除了 DSH 内部使用，web-scout 还能作为标准 **MCP 服务**被任意宿主调用（Claude Desktop、Cursor、你自己的脚本、CI）。零依赖，只用 Node 内置能力，协议层是手写的 JSON-RPC 2.0 over stdio。
+
+```bash
+node <仓库路径>/mcp/server.mjs          # 直接跑（stdio 就是协议通道，日志走 stderr）
+node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
+```
+
+在宿主的 MCP 配置里加一段即可：
+
+```json
+{
+  "mcpServers": {
+    "web-scout": {
+      "command": "node",
+      "args": ["D:/dshcs/web-scout/mcp/server.mjs"],
+      "env": {}
+    }
+  }
+}
+```
+
+| 工具 | 参数 | 返回 |
+| --- | --- | --- |
+| `web_scout_search` | `query`（榜单类可空）、`platforms`、`limit`、`pages`、`timeoutMs`、`refresh` | `content[].text` 人读清单 + `structuredContent`（`query/platforms/results/cached/cacheAgeMs`） |
+| `web_scout_read` | `url`、`maxChars` | 标题、状态码、字数、是否截断、正文、缓存命中 |
+| `web_scout_providers` | 无 | 平台 / provider 清单、默认源、代理、缓存 TTL |
+
+设计要点：
+
+- **共享配置与缓存**：MCP 服务读的是同一份 `~/.dsh/web-scout.json`，缓存也是同一个 `web-scout-cache.db`（SQLite WAL，多进程安全）。面板里搜过的词，MCP 侧再搜是毫秒级命中；反之亦然。
+- **共享 provider**：外部 provider（`<profile>/web-scout-providers/*.mjs`）会自动加载，MCP 里 `platforms:["mysite"]` 直接可用。
+- **协议兼容**：支持 MCP `2025-06-18` / `2025-03-26` / `2024-11-05`；客户端报新版本就回新版本，报不认识的版本回落 `2024-11-05`。传输同时吃换行分隔 JSON（MCP 官方 stdio）和 LSP 式 `Content-Length` 帧。
+- **不会被脏输入打死**：坏 JSON 回 `-32700` 后继续服务；未知方法回 `-32601`；工具报错用 `isError:true` 包住，进程不退出；stdin 关闭才 `exit 0`。
+- **stdout 只走协议**：所有诊断日志写 stderr，避免把宿主解析器搞崩（验收里有一条专门断言）。
+
+验收脚本（都在 `_probe/`，可直接 `node` 跑）：
+
+| 脚本 | 覆盖 | 结果 |
+| --- | --- | --- |
+| `verify-mcp.mjs` | 握手/版本协商、tools/list、搜索、二次缓存命中、refresh、正文缓存、错误路径、榜单空 query | 24/24 |
+| `verify-mcp-robust.mjs` | 并发流水线 id 对齐、stdout 纯 JSON、批量数组、坏 JSON 后存活、stdin 关闭 exit 0、Content-Length 帧 | 10/10 |
+| `verify-mcp-tools.mjs` | 外部 provider 可搜、未知平台回落默认源、`timeoutMs` 钳位、不可达域名 isError | 7/7 |
+
 ### 三个工具（Agent 侧）
 
 | 工具 | 参数 | 用途 |

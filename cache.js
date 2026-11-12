@@ -130,6 +130,18 @@ export class ScoutCache {
     }
   }
 
+  /** 主动删掉一条（refresh 语义用）。 */
+  forget(key) {
+    const id = hash(key);
+    this.memory.delete(id);
+    if (!this.db) return;
+    try {
+      this.db.prepare('DELETE FROM cache WHERE k = ?').run(id);
+    } catch {
+      // 删不掉就当没命中，下次写入会覆盖。
+    }
+  }
+
   /** 命中就返回，没命中就执行 loader 并写回。 */
   async wrap(key, loader, ttlMs) {
     const hit = this.get(key);
