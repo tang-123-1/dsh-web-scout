@@ -5,6 +5,9 @@ import path from 'node:path';
 /** 配置文件版本：老文件没有 version 字段，读到时按 0 处理并迁移一次。 */
 const STORE_VERSION = 2;
 
+/** 自定义站点允许的展示类型，用来决定面板里渲染成卡片还是视频。 */
+const CUSTOM_KINDS = new Set(['auto', 'video', 'article', 'qa', 'forum', 'hot', 'shop', 'code', 'doc']);
+
 const DEFAULTS = {
   proxy: '',
   limit: 12,
@@ -63,6 +66,7 @@ function normalize(raw) {
         name: String(item.name).trim().slice(0, 40),
         url: String(item.url).trim().slice(0, 500),
         site: String(item.site || '').trim().slice(0, 120),
+        kind: CUSTOM_KINDS.has(String(item.kind || 'auto')) ? String(item.kind || 'auto') : 'auto',
       }));
   }
   if (value.cookies && typeof value.cookies === 'object' && !Array.isArray(value.cookies)) {

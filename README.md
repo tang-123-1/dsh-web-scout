@@ -49,6 +49,8 @@
 - **对话感知**：留空查询时，从最近的对话里提取用户意图（自动跳过系统注入的噪音行），并识别「在B站和知乎搜一下」这种平台指名。
 - **登录态复用**：插件自带一个独立 profile 的浏览器（`--user-data-dir`），你在里面登录一次，插件通过 CDP 读 cookie，之后搜索和读网页都带着你的登录态；也支持从 Edge/Chrome/Firefox 导入、手动粘贴。
 - **面板可拖动、可缩放**，位置记在 `localStorage['web-scout-panel-rect']`；`打开` 交给系统默认浏览器。
+- **按站点类型出卡片**（v1.9）：视频 / 文章 / 问答 / 论坛 / 榜单 / 商品 / 代码 / 文档 / 动态 / 网页十类，卡片带类型标签与缩略图；自定义站点按填写的类型或域名自动套用。
+- **面板内直接播 B 站视频**（v1.9）：结果行出现「播放」→ 面板里展开嵌入式播放器（`player.bilibili.com`），不用跳浏览器。
 - **纯 Node 实现，零运行时依赖**：不用 `npm install`，HTTP/TLS/压缩/WebSocket 全部用 `node:http`、`node:tls`、`node:zlib`、全局 `WebSocket`。
 
 ## 安装
@@ -111,6 +113,27 @@ node scripts/smoke.mjs "cordis 插件"
 - 点「联网检索」打开面板；输入关键词回车，或直接点「搜索」（留空 = 用当前对话内容当查询）。
 - 芯片行是平台选择：点一下加入、再点一下移除；「站点」分区里是所有平台的网格，还能新增任意站点（名称 / 限定域名 / 搜索地址，用 `{q}` 占位）；「登录与账号」分区管登录。
 - 结果行左边的平台名来自后端标签，右边「打开」交给系统浏览器；服务端不可达的站点会单独列一块，每行一个「在浏览器打开」。
+- 结果是卡片：左边缩略图（没有图就显示类型字形）、中间标题 + `平台` `类型` `URL` + 两行摘要、右边竖排按钮（视频类多一个「播放 / 收起」）。
+
+### 卡片与内嵌播放（v1.9）
+
+结果列表按站点类型渲染，类型来自三处（优先级从高到低）：
+
+1. 平台定义里的 `kind`（内置平台用 `KIND_BY_ID`）；
+2. 自定义站点自己填的「类型」（添加站点表单的第三个下拉，选 `auto` 就交给下一步）；
+3. 域名/路径猜类型：`bilibili.com|youtube.com|/video/` → 视频，`zhihu.com|/question/` → 问答，`v2ex|reddit|/t/` → 论坛，`github|npm` → 代码，`taobao|jd` → 商品，`/hot` → 榜单，其余按平台分组兜底。
+
+| 类型 | 中文标签 | 卡片表现 |
+| --- | --- | --- |
+| `video` | 视频 | 缩略图 + ▶ 遮罩；有 `embed` 时多一个「播放」 |
+| `article` | 文章 | 缩略图（有就显示） |
+| `qa` `forum` `hot` `shop` `code` `doc` `social` `web` | 问答 / 论坛 / 榜单 / 商品 / 代码 / 文档 / 动态 / 网页 | 类型标签 + 字形占位 |
+
+内嵌播放只对返回 `embed` 的结果生效，目前是 **B 站**（`https://player.bilibili.com/player.html?bvid=…&autoplay=1`，服务端从 `x/web-interface/wbi/search/type` 的 `bvid` 拼出来）。抖音拿不到单条视频 URL（`site:douyin.com` 只回站内入口行，`aweme/v1/web/general/search` 需要 `a_bogus` 签名），所以抖音只有「打开」。
+
+> 维护坑（v1.9 修过一次）：**B 站搜索接口是匿名的**。带上 store 里那套过期 `SESSDATA`/`buvid3` 会被判风控（`-412`/`-352`），两次重试都空 → 抛 `EngineBlocked` → 落到 `site:` 兜底，结果行就没有 `thumb`/`embed`，卡片既没图也不能播。所以 `backends.bilibili` 请求带了 `noCookies: true`（`net.js` 里 `init.noCookies === true` 时跳过 cookie jar）。
+
+![卡片化结果 + 面板内嵌播放 B 站视频](docs/panel-cards.png)
 
 ### 三个工具（Agent 侧）
 

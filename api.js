@@ -83,6 +83,8 @@ function summarize(result) {
       count: entry.count,
       browser: entry.browser,
       backend: entry.backend,
+      kind: entry.kind || 'web',
+      login: entry.login === true,
     })),
     results: result.results.slice(0, 150),
   };
@@ -246,7 +248,7 @@ export function createApi({ store, defaults, readMessages, clientGraph }) {
           .replace(/\/.*$/, '');
         const list = [...(settings.customPlatforms || [])];
         if (list.some((item) => item.name === name && item.url === url)) throw new Error('这个站点已经添加过了');
-        list.push({ id: customPlatformId(name), name, url, site });
+        list.push({ id: customPlatformId(name), name, url, site, kind: String(payload.kind || 'auto') });
         const next = store.patch({ customPlatforms: list });
         syncCustomPlatforms();
         return catalogPayload(next);

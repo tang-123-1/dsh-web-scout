@@ -2,6 +2,25 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
+## 1.9.0 — 2026-11-12
+
+### 新增
+- **结果卡片化**：结果行改成卡片——左侧 92×56 缩略图（无图显示类型字形）、中间标题 + `平台` `类型` `URL` + 两行摘要、右侧竖排动作按钮。
+- **十种站点类型**：视频 / 文章 / 问答 / 论坛 / 榜单 / 商品 / 代码 / 文档 / 动态 / 网页。类型判定优先级：平台定义 `kind` → 自定义站点手选类型 → `inferKindFromUrl()` 按域名与路径猜 → 平台分组兜底。
+- **面板内嵌播放 B 站视频**：`backends.bilibili` 与 `backends['bili-hot']` 现在返回 `embed`（`player.bilibili.com/player.html?bvid=…`）和 `thumb`；卡片上出现「播放 / 收起」，点开在卡片下方渲染 16:9 的 `iframe`，可全屏。
+- 自定义站点表单新增「类型」下拉（`auto` 时交给域名推断），`platform.add` 与 `store.js` 会保存并校验该字段。
+- `platformCatalog()` / `summarize()` 的平台条目新增 `kind`，客户端据此渲染类型标签。
+
+### 修复
+- **B 站卡片无图、不能播**：`backends.bilibili` 之前会带 store 里的旧 cookie（`SESSDATA`/`buvid3`），被 B 站搜索接口判风控（`-412`/`-352`）后两次重试都空，于是落到 `site:` 兜底——兜底行没有 `thumb`/`embed`。现在 `net.js` 支持 `noCookies` 开关，B 站搜索请求显式不带 cookie（接口本身是匿名的），实测 12 行全部带封面与 `embed`。
+
+### 已知限制
+- 抖音不出内嵌播放：`site:douyin.com` 只回站内入口行，`aweme/v1/web/general/search` 需要 `a_bogus` 签名，拿不到 `/video/<id>`；抖音卡片只有「打开」。
+
+### 工程
+- 新增离线脚本 `_probe/t93.mjs`（后端直调，检查 `thumb`/`embed`）、`_probe/t95.mjs`（无 cookie 复现）、`_probe/t96.mjs`（带 store cookie 复现 + 修复后回归）。
+- README 新增「卡片与内嵌播放（v1.9）」小节与类型表、`noCookies` 维护坑；截图 `docs/panel-cards.png`。
+
 ## 1.8.0 — 2026-11-12
 
 ### 新增

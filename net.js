@@ -207,7 +207,7 @@ export function createClient(options = {}) {
       'accept-encoding': 'gzip, deflate, br',
       ...(init.headers || {}),
     };
-    const cookie = jar.header(url.hostname);
+    const cookie = init.noCookies === true ? '' : jar.header(url.hostname);
     if (cookie) headers.cookie = cookie;
     if (init.referer) headers.referer = init.referer;
     const body = init.body === undefined ? undefined : Buffer.from(init.body);

@@ -37,6 +37,20 @@ window.__ModuleLoader__.load({
         picker: '选择平台（点一下加入或移除，最多 10 个）',
         addSite: '添加站点',
         siteName: '名称，如 抖音',
+  siteKind: '展示类型',
+  kindAuto: '自动判断',
+  kindVideo: '视频',
+  kindArticle: '文章',
+  kindQa: '问答',
+  kindForum: '论坛',
+  kindHot: '榜单',
+  kindShop: '商品',
+  kindCode: '代码',
+  kindDoc: '文档',
+  kindSocial: '动态',
+  kindWeb: '网页',
+  play: '播放',
+  collapse: '收起',
         siteUrl: '搜索地址，用 {q} 占位',
         siteDomain: '限定域名，如 douyin.com',
         add: '添加',
@@ -89,6 +103,20 @@ window.__ModuleLoader__.load({
         picker: 'Tap to add or remove (up to 10)',
         addSite: 'Add a site',
         siteName: 'Name, e.g. 抖音',
+  siteKind: 'Card type',
+  kindAuto: 'Auto',
+  kindVideo: 'Video',
+  kindArticle: 'Article',
+  kindQa: 'Q&A',
+  kindForum: 'Forum',
+  kindHot: 'Ranking',
+  kindShop: 'Product',
+  kindCode: 'Code',
+  kindDoc: 'Doc',
+  kindSocial: 'Post',
+  kindWeb: 'Web',
+  play: 'Play',
+  collapse: 'Hide',
         siteUrl: 'Search URL with {q}',
         siteDomain: 'Restrict to domain, e.g. douyin.com',
         add: 'Add',
@@ -390,6 +418,68 @@ window.__ModuleLoader__.load({
         WebkitBoxOrient: 'vertical',
         overflow: 'hidden',
       },
+      card: { padding: '8px 0', borderBottom: `1px solid ${C.line}` },
+      cardRow: { display: 'flex', gap: '10px', alignItems: 'flex-start' },
+      thumbWrap: {
+        width: '92px',
+        height: '56px',
+        borderRadius: '6px',
+        overflow: 'hidden',
+        flex: '0 0 auto',
+        position: 'relative',
+        background: C.layer2,
+        border: `1px solid ${C.line}`,
+        cursor: 'pointer',
+      },
+      thumb: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
+      thumbGlyph: {
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: '15px',
+        color: C.dim,
+        letterSpacing: '1px',
+      },
+      playDot: {
+        position: 'absolute',
+        inset: '0',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: '#fff',
+        fontSize: '15px',
+        textShadow: '0 1px 4px rgba(0,0,0,.65)',
+        background: 'rgba(0,0,0,.22)',
+      },
+      player: {
+        marginTop: '8px',
+        width: '100%',
+        aspectRatio: '16 / 9',
+        borderRadius: '6px',
+        overflow: 'hidden',
+        border: `1px solid ${C.line}`,
+        background: '#000',
+      },
+      kindTag: {
+        fontSize: '10px',
+        color: C.dim,
+        borderRadius: '4px',
+        padding: '0 4px',
+        marginRight: '5px',
+        background: C.layer2,
+      },
+      cardActions: { display: 'flex', flexDirection: 'column', gap: '4px', flex: '0 0 auto' },
+      miniSelect: {
+        fontSize: '12px',
+        color: C.text,
+        background: C.layer2,
+        border: '1px solid transparent',
+        borderRadius: '6px',
+        padding: '3px 6px',
+        outline: 'none',
+      },
       tag: {
         fontSize: '10px',
         color: C.dim,
@@ -440,7 +530,41 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function statusStyle(status) {
+    const KIND_KEY = {
+  video: 'kindVideo',
+  article: 'kindArticle',
+  qa: 'kindQa',
+  forum: 'kindForum',
+  hot: 'kindHot',
+  shop: 'kindShop',
+  code: 'kindCode',
+  doc: 'kindDoc',
+  social: 'kindSocial',
+  web: 'kindWeb',
+};
+
+const KIND_GLYPH = {
+  video: '▶',
+  article: '文',
+  qa: '问',
+  forum: '论',
+  hot: '热',
+  shop: '购',
+  code: '码',
+  doc: '档',
+  social: '动',
+  web: '网',
+};
+
+function kindLabel(t, key) {
+  return typeof t === 'function' ? t(key) : String(key || '');
+}
+
+function kindText(t, kind) {
+  return kindLabel(t, KIND_KEY[kind] || KIND_KEY.web);
+}
+
+function statusStyle(status) {
       if (status === 'ok') return { color: C.ok, borderColor: C.ok };
       if (status === 'blocked') return { color: C.warn, borderColor: C.warn };
       if (status === 'error') return { color: C.bad, borderColor: C.bad };
@@ -526,7 +650,8 @@ window.__ModuleLoader__.load({
       const [customs, setCustoms] = React.useState([]);
       const [open, setOpen] = React.useState('');
       const toggleSection = (name) => setOpen((current) => (current === name ? '' : name));
-      const [form, setForm] = React.useState({ name: '', url: '', site: '' });
+      const [form, setForm] = React.useState({ name: '', url: '', site: '', kind: 'auto' });
+  const [playing, setPlaying] = React.useState('');
       const [formNote, setFormNote] = React.useState('');
       const [busyId, setBusyId] = React.useState('');
       // 芯片增删是连点高频操作，用它给请求编号：迟到的旧响应不能覆盖最新状态，
@@ -712,7 +837,7 @@ window.__ModuleLoader__.load({
       const submitSite = async () => {
         setFormNote('');
         try {
-          const value = await post('platform.add', { name: form.name, url: form.url, site: form.site });
+          const value = await post('platform.add', { name: form.name, url: form.url, site: form.site, kind: form.kind });
           applyCatalog(value);
           const added = (value.customPlatforms || []).find((item) => item.name === form.name);
           setForm({ name: '', url: '', site: '' });
@@ -1074,6 +1199,18 @@ window.__ModuleLoader__.load({
                         onChange: (event) => setForm({ ...form, url: event.target.value }),
                       }),
                       h(
+                        'select',
+                        {
+                          value: form.kind,
+                          style: S.miniSelect,
+                          title: t('siteKind'),
+                          onChange: (event) => setForm({ ...form, kind: event.target.value }),
+                        },
+                        ['auto', 'video', 'article', 'qa', 'forum', 'hot', 'shop', 'code', 'doc'].map((value) =>
+                          h('option', { key: value, value }, kindLabel(t, value === 'auto' ? 'kindAuto' : 'kind' + value.charAt(0).toUpperCase() + value.slice(1))),
+                        ),
+                      ),
+                      h(
                         'button',
                         { type: 'button', style: merge(S.mini, S.miniOn), onClick: submitSite },
                         t('add'),
@@ -1188,33 +1325,98 @@ window.__ModuleLoader__.load({
               data && data.query && data.query.length > 40 ? h('div', { style: S.hint }, t('longHint')) : null,
               feedOnly ? h('div', { style: S.hint }, t('feedHint')) : null,
               data && rows.length === 0 ? h('div', { style: S.hint }, t('empty')) : null,
-              rows.map((item) =>
-                h(
+              rows.map((item) => {
+                const kind = item.kind || 'web';
+                const embed = typeof item.embed === 'string' ? item.embed : '';
+                const thumb = typeof item.thumb === 'string' ? item.thumb : '';
+                const playable = kind === 'video' && embed !== '';
+                const shown = playing === item.url;
+                return h(
                   'div',
-                  { key: `${item.url}|${item.title}`, style: S.item },
+                  { key: `${item.url}|${item.title}`, style: S.card },
                   h(
                     'div',
-                    { style: S.itemMain },
+                    { style: S.cardRow },
                     h(
-                      'a',
+                      'div',
                       {
-                        href: item.url,
-                        target: '_blank',
-                        rel: 'noreferrer',
-                        style: S.itemTitle,
-                        onClick: (event) => {
-                          event.preventDefault();
-                          openUrl(item.url);
+                        style: S.thumbWrap,
+                        title: playable ? t('play') : t('open'),
+                        onClick: () => {
+                          if (playable) setPlaying(shown ? '' : item.url);
+                          else openUrl(item.url);
                         },
                       },
-                      item.title || item.url,
+                      thumb !== ''
+                        ? h('img', {
+                            src: thumb,
+                            alt: '',
+                            loading: 'lazy',
+                            referrerPolicy: 'no-referrer',
+                            style: S.thumb,
+                            onError: (event) => {
+                              event.currentTarget.style.display = 'none';
+                            },
+                          })
+                        : playable
+                          ? h('div', { style: S.thumbGlyph }, KIND_GLYPH.video)
+                          : null,
+                      playable ? h('div', { style: S.playDot }, shown ? '‖' : '▶') : null,
                     ),
-                    h('div', { style: S.itemUrl }, h('span', { style: S.tag }, item.platformLabel || item.platform), item.url),
-                    item.snippet ? h('div', { style: S.itemSnip }, item.snippet) : null,
+                    h(
+                      'div',
+                      { style: S.itemMain },
+                      h(
+                        'a',
+                        {
+                          href: item.url,
+                          target: '_blank',
+                          rel: 'noreferrer',
+                          style: S.itemTitle,
+                          onClick: (event) => {
+                            event.preventDefault();
+                            openUrl(item.url);
+                          },
+                        },
+                        item.title || item.url,
+                      ),
+                      h(
+                        'div',
+                        { style: S.itemUrl },
+                        h('span', { style: S.tag }, item.platformLabel || item.platform),
+                        h('span', { style: S.kindTag }, kindText(t, kind)),
+                        item.url,
+                      ),
+                      item.snippet ? h('div', { style: S.itemSnip }, item.snippet) : null,
+                    ),
+                    h(
+                      'div',
+                      { style: S.cardActions },
+                      playable
+                        ? h(
+                            'button',
+                            { type: 'button', style: S.button, onClick: () => setPlaying(shown ? '' : item.url) },
+                            shown ? t('collapse') : t('play'),
+                          )
+                        : null,
+                      h('button', { type: 'button', style: S.button, onClick: () => openUrl(item.url) }, t('open')),
+                    ),
                   ),
-                  h('button', { type: 'button', style: S.button, onClick: () => openUrl(item.url) }, t('open')),
-                ),
-              ),
+                  shown
+                    ? h(
+                        'div',
+                        { style: S.player },
+                        h('iframe', {
+                          src: embed,
+                          title: item.title || '',
+                          style: { width: '100%', height: '100%', border: '0' },
+                          allow: 'autoplay; fullscreen; encrypted-media; picture-in-picture',
+                          allowFullScreen: true,
+                        }),
+                      )
+                    : null,
+                );
+              }),
               blockedRows.length > 0
                 ? h(
                     'div',

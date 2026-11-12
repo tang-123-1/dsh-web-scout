@@ -32,13 +32,93 @@ function isLandingPage(url) {
   }
 }
 
+// 展示类型：决定面板里这一条长什么样（视频卡片 / 问答 / 论坛 / 榜单 / 商品 / 文章 / 代码）。
+const KIND_BY_ID = {
+  bilibili: 'video',
+  bilihot: 'video',
+  douyin: 'video',
+  douyinhot: 'hot',
+  youtube: 'video',
+  zhihu: 'qa',
+  zhihurec: 'qa',
+  zhihufollow: 'qa',
+  zhihuhot: 'hot',
+  stackoverflow: 'qa',
+  v2ex: 'forum',
+  reddit: 'forum',
+  hackernews: 'forum',
+  segmentfault: 'forum',
+  cnblogs: 'forum',
+  oschina: 'forum',
+  github: 'code',
+  gitee: 'code',
+  npm: 'code',
+  pypi: 'code',
+  mdn: 'doc',
+  wikipedia: 'doc',
+  taobao: 'shop',
+  jd: 'shop',
+  '1688': 'shop',
+  amazon: 'shop',
+  xianyu: 'shop',
+  weibohot: 'hot',
+  baiduhot: 'hot',
+  toutiaohot: 'hot',
+  csdn: 'article',
+  juejin: 'article',
+  toutiao: 'article',
+  weixin: 'article',
+  sspai: 'article',
+  medium: 'article',
+  douban: 'article',
+  weibo: 'social',
+  xiaohongshu: 'social',
+};
+
+const KIND_BY_GROUP = {
+  video: 'video',
+  social: 'social',
+  code: 'code',
+  shop: 'shop',
+  doc: 'doc',
+  general: 'web',
+  cn: 'article',
+};
+
+/** 从搜索模板/站点域名猜一个展示类型，供用户自己添加的站点使用。 */
+export function inferKindFromUrl(value) {
+  const text = String(value || '').toLowerCase();
+  if (/youtube\.com|youtu\.be|bilibili\.com|douyin\.com|vimeo\.com|youku\.com|iqiyi\.com|ixigua\.com|kuaishou\.com|huya\.com|douyu\.com|\/video\/|player\./.test(text)) {
+    return 'video';
+  }
+  if (/zhihu\.com|stackoverflow\.com|quora\.com|\/question\//.test(text)) return 'qa';
+  if (/v2ex\.com|reddit\.com|news\.ycombinator\.com|segmentfault\.com|cnblogs\.com|tieba\.baidu\.com/.test(text)) {
+    return 'forum';
+  }
+  if (/github\.com|gitee\.com|gitlab\.com|npmjs\.com|pypi\.org/.test(text)) return 'code';
+  if (/taobao\.com|tmall\.com|jd\.com|1688\.com|amazon\.|pinduoduo\.com|goofish\.com|xianyu/.test(text)) return 'shop';
+  if (/zhihu\.com\/hot|weibo\.com\/top|top\.baidu\.com|hot-board|hotsearch|\/hot\b/.test(text)) return 'hot';
+  return 'article';
+}
+
+export function kindOf(def) {
+  if (!def) return 'web';
+  if (def.kind && def.kind !== 'auto') return def.kind;
+  if (KIND_BY_ID[def.id]) return KIND_BY_ID[def.id];
+  if (def.custom === true) return inferKindFromUrl(def.url || def.site || '');
+  return KIND_BY_GROUP[def.group] || 'web';
+}
+
 function result(platform, def, item) {
   return {
     platform,
     platformLabel: def.zh,
+    kind: kindOf(def),
     title: stripTags(item.title || '').slice(0, 300),
     url: item.url || '',
     snippet: stripTags(item.snippet || '').slice(0, 500),
+    thumb: String(typeof item.thumb === 'string' ? item.thumb : '').replace(/^http:\/\//i, 'https://'),
+    embed: typeof item.embed === 'string' ? item.embed : '',
     source: item.source || def.zh,
     extra: item.extra || undefined,
   };
@@ -257,6 +337,7 @@ export function registerCustomPlatforms(list) {
       en: name,
       group: CUSTOM_GROUP,
       custom: true,
+      kind: item.kind && item.kind !== 'auto' ? String(item.kind) : 'auto',
       url: template,
       site: site || undefined,
       browser: (query) => customUrl(template, query),
@@ -407,6 +488,7 @@ export function platformCatalog() {
     login: loginUrlFor(item.id) || (item.needsLogin ? loginUrlFor(item.needsLogin) : ''),
     custom: item.custom === true,
     list: item.list === true,
+    kind: kindOf(item),
   }));
 }
 
@@ -952,10 +1034,13 @@ backends['bili-hot'] = async ({ client, limit, timeoutMs }) => {
     const stat = (row && row.stat) || {};
     const bvid = String((row && row.bvid) || `av${(row && row.aid) || ''}`);
     const author = (row && row.owner && row.owner.name) || '';
+    const cover = String((row && row.pic) || '');
     return {
       title: String((row && row.title) || ''),
       url: `https://www.bilibili.com/video/${bvid}`,
       snippet: `热门第 ${index + 1} 名 · ${hotCount(stat.view)} 播放 · ${hotCount(stat.like)} 赞${author ? ` · @${author}` : ''}`,
+      thumb: cover.startsWith('//') ? `https:${cover}` : cover,
+      embed: /^BV/.test(bvid) ? `https://player.bilibili.com/player.html?bvid=${bvid}&autoplay=1&high_quality=1&danmaku=0` : '',
       source: 'B站热门',
       extra: { rank: index + 1, view: Number(stat.view) || 0, like: Number(stat.like) || 0, author },
     };
@@ -1306,40 +1391,60 @@ async function bilibiliKey(client, timeoutMs) {
 
 backends.bilibili = async (ctx) => {
   const { client, query, limit, timeoutMs, page = 1 } = ctx;
-  const mixin = await bilibiliKey(client, timeoutMs);
-  const params = {
+  const target = 'https://api.bilibili.com/x/web-interface/wbi/search/type';
+  const base = {
     search_type: 'video',
     keyword: query,
     page: String(Math.max(1, Number(page) || 1)),
     page_size: String(Math.min(50, Math.max(10, limit))),
   };
-  let target = 'https://api.bilibili.com/x/web-interface/wbi/search/type';
-  if (mixin !== '') {
-    const wts = String(Math.floor(Date.now() / 1000));
-    const sorted = Object.keys(params)
-      .sort()
-      .map((key) => `${enc(key)}=${enc(String(params[key]).replace(/[!'()*]/g, ''))}`)
+  let rows = [];
+  let lastCode = 0;
+  // wbi 的 key 会过期，也可能被限流：第一次拿不到结果就换一把 key 再试一次。
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const mixin = await bilibiliKey(client, timeoutMs);
+    const params = { ...base };
+    if (mixin !== '') {
+      const wts = String(Math.floor(Date.now() / 1000));
+      const sorted = Object.keys(params)
+        .sort()
+        .map((key) => `${enc(key)}=${enc(String(params[key]).replace(/[!'()*]/g, ''))}`)
+        .join('&');
+      params.wts = wts;
+      params.w_rid = md5(`${sorted}&wts=${wts}${mixin}`);
+    }
+    const search = Object.keys(params)
+      .map((key) => `${enc(key)}=${enc(String(params[key]))}`)
       .join('&');
-    params.wts = wts;
-    params.w_rid = md5(`${sorted}&wts=${wts}${mixin}`);
+    const { data } = await client.json(`${target}?${search}`, {
+      headers: { referer: 'https://search.bilibili.com/', origin: 'https://search.bilibili.com' },
+      timeoutMs,
+      // 搜索接口是匿名的：带上 store 里的旧 cookie 反而会被判风控（-412），所以明确不带。
+      noCookies: true,
+    });
+    lastCode = data && data.code ? Number(data.code) : 0;
+    rows = data && data.data && Array.isArray(data.data.result) ? data.data.result : [];
+    if (rows.length > 0) break;
+    wbiCache = { at: 0, key: '' };
   }
-  const search = Object.keys(params)
-    .map((key) => `${enc(key)}=${enc(String(params[key]))}`)
-    .join('&');
-  const { data } = await client.json(`${target}?${search}`, {
-    headers: { referer: 'https://search.bilibili.com/', origin: 'https://search.bilibili.com' },
-    timeoutMs,
+  if (rows.length === 0) {
+    if (lastCode === -412 || lastCode === -352 || lastCode === -401) {
+      throw new EngineBlocked(`bilibili ${lastCode}: 请求被风控`, { browser: `https://search.bilibili.com/all?keyword=${enc(query)}` });
+    }
+    return [];
+  }
+  return rows.slice(0, limit).map((row) => {
+    const bvid = String(row.bvid || '');
+    const cover = String(row.pic || row.cover || '');
+    return {
+      title: stripTags(row.title),
+      url: bvid ? `https://www.bilibili.com/video/${bvid}` : `https://www.bilibili.com/video/av${row.aid || ''}`,
+      snippet: stripTags(row.description || ''),
+      thumb: cover.startsWith('//') ? `https:${cover}` : cover,
+      embed: bvid ? `https://player.bilibili.com/player.html?bvid=${bvid}&autoplay=1&high_quality=1&danmaku=0` : '',
+      extra: { author: stripTags(row.author || ''), play: row.play, duration: row.duration },
+    };
   });
-  if (data && (data.code === -412 || data.code === -352 || data.code === -401)) {
-    throw new EngineBlocked(`bilibili ${data.code}: ${data.message || ''}`, { browser: `https://search.bilibili.com/all?keyword=${enc(query)}` });
-  }
-  const rows = data && data.data && Array.isArray(data.data.result) ? data.data.result : [];
-  return rows.slice(0, limit).map((row) => ({
-    title: stripTags(row.title),
-    url: row.bvid ? `https://www.bilibili.com/video/${row.bvid}` : `https://www.bilibili.com/video/av${row.aid || ''}`,
-    snippet: stripTags(row.description || ''),
-    extra: { author: stripTags(row.author || ''), play: row.play, duration: row.duration },
-  }));
 };
 
 export const BACKENDS = backends;
@@ -1526,6 +1631,8 @@ export async function runSearch(options) {
         count: items.length,
         browser: browserUrl,
         backend: def.backend || `site:${def.site}`,
+        kind: kindOf(def),
+        login: def.needsLogin !== undefined,
         results: items,
       };
     } catch (error) {
@@ -1545,6 +1652,8 @@ export async function runSearch(options) {
         count: 0,
         browser: browserUrl,
         backend: def.backend || `site:${def.site}`,
+        kind: kindOf(def),
+        login: def.needsLogin !== undefined,
         results: [],
       };
     }
