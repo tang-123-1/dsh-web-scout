@@ -110,6 +110,9 @@ export function kindOf(def) {
 }
 
 function result(platform, def, item) {
+  const extra = item.extra && typeof item.extra === 'object' ? { ...item.extra } : {};
+  // 服务端解不开的中转壳（搜狗的 /link?url=… 会被 antispider 拦）：标记出来，面板据此提示。
+  if (item.url && isRedirectorUrl(item.url)) extra.shell = true;
   return {
     platform,
     platformLabel: def.zh,
@@ -120,7 +123,7 @@ function result(platform, def, item) {
     thumb: String(typeof item.thumb === 'string' ? item.thumb : '').replace(/^http:\/\//i, 'https://'),
     embed: typeof item.embed === 'string' ? item.embed : '',
     source: item.source || def.zh,
-    extra: item.extra || undefined,
+    extra: Object.keys(extra).length > 0 ? extra : undefined,
   };
 }
 
@@ -168,11 +171,37 @@ function relevanceTokens(query) {
   return tokens;
 }
 
-function keepRelevant(items, tokens) {
-  if (tokens.length === 0 || items.length === 0) return items;
+/** 去掉空白：必应会把中文标题切开（「7-8 岁儿童绘本」），逐字比对会漏。 */
+function squeeze(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[\s\u3000]+/gu, '');
+}
+
+/** 中文没有分词：用 2-gram 覆盖率判断，长句查询不会再因为"整串没出现"被误杀。 */
+function cjkGrams(query) {
+  const text = squeeze(query).replace(/[^\u4e00-\u9fff0-9a-z]/gu, '');
+  const grams = [];
+  for (let index = 0; index + 1 < text.length; index += 1) grams.push(text.slice(index, index + 2));
+  return Array.from(new Set(grams));
+}
+
+function keepRelevant(items, tokens, query = '') {
+  if (items.length === 0) return items;
+  if (tokens.length === 0 && String(query).trim() === '') return items;
+  const compactQuery = squeeze(query);
+  const grams = cjkGrams(query);
+  const latin = tokens.filter((token) => /[a-z0-9]/iu.test(token));
   return items.filter((item) => {
-    const haystack = `${item.title || ''} ${item.snippet || ''}`.toLowerCase();
-    return tokens.some((token) => haystack.includes(token));
+    const haystack = squeeze(`${item.title || ''} ${item.snippet || ''}`);
+    if (compactQuery !== '' && haystack.includes(compactQuery)) return true;
+    if (grams.length > 0) {
+      let hit = 0;
+      for (const gram of grams) if (haystack.includes(gram)) hit += 1;
+      if (hit / grams.length >= 0.5) return true;
+    }
+    if (latin.length > 0 && latin.every((token) => haystack.includes(token))) return true;
+    return false;
   });
 }
 
@@ -595,6 +624,73 @@ const FILLERS = [
   /(^|\s)(?:搜|查|找)(?=\s|$)/g,
 ];
 
+/** 跳转壳：搜索引擎把结果包成自己的 /link?url=... 中转页，正文信息为 0。 */
+const REDIRECT_PATH = /\/(?:link|url)\?(?:[^#]*\b(?:url|m|k|q)=)|\/s\?[^#]*\bwd=|\/web\?[^#]*query=|\/search\?[^#]*\bq=/i;
+const REDIRECT_HOSTS = new Set([
+  'baidu.com',
+  'so.com',
+  'sogou.com',
+  'google.com',
+  'bing.com',
+  'duckduckgo.com',
+  'search.brave.com',
+]);
+
+/** 典型"没有正文"的标题：聚合卡片、搜索建议、站内搜索壳。 */
+const JUNK_TITLE = [
+  /的最新相关信息$/u,
+  /的最新消息$/u,
+  /的最新报道$/u,
+  /的搜索结果$/u,
+  /^相关搜索/u,
+  /^大家都在搜/u,
+  /^大家还在搜/u,
+  /^百度一下/u,
+  /^_?百度搜索$/u,
+  /^百度图片$/u,
+  /^百度视频$/u,
+  /^搜狗搜索$/u,
+  /^360搜索$/u,
+  /^Search results?$/iu,
+  /- Google 搜索$/u,
+];
+
+export function isRedirectorUrl(value) {
+  const url = String(value || '');
+  if (url === '') return false;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.replace(/^www\./u, '');
+  const matched = [...REDIRECT_HOSTS].some((base) => host === base || host.endsWith(`.${base}`));
+  if (!matched) return false;
+  if (!REDIRECT_PATH.test(parsed.pathname + parsed.search)) return false;
+  return true;
+}
+
+export function isJunkResult(item, query = '') {
+  const title = String((item && item.title) || '').trim();
+  const url = String((item && item.url) || '').trim();
+  if (title === '' || url === '') return true;
+  if (title === query.trim()) return true;
+  if (JUNK_TITLE.some((rule) => rule.test(title))) return true;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return true;
+  }
+  const host = parsed.hostname.replace(/^www\./u, '');
+  // 搜索引擎自己的结果页（/s?wd= / /web?query= / /search?q=）没有正文，属于空壳。
+  if (/^(?:baidu|so|sogou|bing|google)\.com$/u.test(host) && /^\/(?:s|web|search)\/?$/u.test(parsed.pathname)) {
+    return true;
+  }
+  return false;
+}
+
 export function cleanQuery(text) {
   let value = String(text || '').replace(/\s+/g, ' ').trim();
   value = value.replace(/[，。！？、；：""''（）【】《》…]+$/g, '').trim();
@@ -737,7 +833,12 @@ backends.baidu = async (ctx) => {
   for (const chunk of blocks) {
     const anchor = /<h3[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(chunk);
     if (!anchor) continue;
-    const url = absolutize(decodeEntities(anchor[1]), 'https://www.baidu.com');
+    // 百度把真实地址放在容器的 mu / data-landurl 上；href 常常只是 /link?url=... 中转壳。
+    const head = chunk.slice(0, 2400);
+    const pick = /(?:^|\s)(?:mu|data-landurl)="([^"]+)"/i.exec(head);
+    const candidate = pick ? decodeEntities(pick[1]) : '';
+    const href = absolutize(decodeEntities(anchor[1]), 'https://www.baidu.com');
+    const url = /^https?:\/\//i.test(candidate) && !isRedirectorUrl(candidate) ? candidate : href;
     const title = stripTags(anchor[2]);
     if (url === '' || title === '') continue;
     const snippetMatch = /<div[^>]*class="[^"]*c-abstract[^"]*"[^>]*>([\s\S]*?)<\/div>/i.exec(chunk) ||
@@ -1088,7 +1189,7 @@ backends['baidu-hot'] = async ({ client, limit, timeoutMs }) => {
         if (!item || !item.word) continue;
         rows.push({
           title: String(item.word),
-          url: String(item.url || `https://www.baidu.com/s?wd=${encodeURIComponent(item.word)}`),
+          url: `https://www.baidu.com/s?wd=${encodeURIComponent(String(item.word || item.query || ''))}`,
           snippet: `热搜第 ${rows.length + 1} 名${item.desc ? ` · ${String(item.desc).slice(0, 60)}` : ''}`,
           source: '百度热搜',
           extra: { rank: rows.length + 1, desc: item.desc || '', hot: item.hotScore || '' },
@@ -1230,6 +1331,27 @@ backends.v2ex = async (ctx) => {
   }).filter((row) => row.title !== '' && row.url.includes('/t/'));
 };
 
+/** 搜狗的 /link?url=... 会 302 到 mp.weixin.qq.com；解析失败就保留原壳（至少能点开）。 */
+async function resolveSogouLink(client, url, timeoutMs) {
+  if (!/weixin\.sogou\.com\/link\?url=/u.test(url)) return url;
+  try {
+    const res = await client.request(url, {
+      headers: { referer: 'https://weixin.sogou.com/' },
+      timeoutMs: Math.min(timeoutMs, 3000),
+    });
+    const finalUrl = String(res.url || '');
+    if (/^https:\/\/(?:mp\.)?weixin\.qq\.com\//u.test(finalUrl)) return finalUrl;
+    const jumped = /window\.location\.replace\(["']([^"']+)["']\)/u.exec(res.text);
+    if (jumped) {
+      const next = absolutize(decodeEntities(jumped[1]), 'https://weixin.sogou.com');
+      if (/^https:\/\/(?:mp\.)?weixin\.qq\.com\//u.test(next)) return next;
+    }
+  } catch {
+    /* 解析失败就用原链接 */
+  }
+  return url;
+}
+
 backends.weixin = async (ctx) => {
   const { client, query, limit, timeoutMs, page = 1 } = ctx;
   // 搜狗微信搜索：每页 10 条公众号文章，链接是 /link?url=…&token=… 的跳转，需要补全域名。
@@ -1255,7 +1377,9 @@ backends.weixin = async (ctx) => {
       extra: { account: account ? stripTags(decodeEntities(account[1])) : '' },
     });
   }
-  return items.slice(0, Math.max(limit, 10));
+  // 搜狗的 /link?url=… 会被 antispider 拦（实测 302 到验证页），解不出来就保留原链：
+  // 在真实浏览器里点开是能跳的，只是服务端拿不到最终地址，所以打一个标记让面板显示「中转」。
+  return items.slice(0, Math.max(limit, 10)).map((item) => ({ ...item, extra: { ...(item.extra || {}), shell: true } }));
 };
 
 // ---- 知乎信息流（v1.7）：按页取「推荐 / 关注」，与关键词无关，需要登录 cookie（z_c0） ----
@@ -1698,6 +1822,8 @@ async function siteSearch(ctx) {
   const attempts = [
     () => BACKENDS.bing({ ...ctx, query: scoped }),
     () => BACKENDS.so360({ ...ctx, query: scoped }),
+    // 百度放在最后兜底：它的 href 是 /link?url=… 中转壳，mu 属性才是真地址（v1.13 已改用 mu）。
+    () => BACKENDS.baidu({ ...ctx, query: scoped }),
   ];
   for (const attempt of attempts) {
     try {
@@ -1808,18 +1934,36 @@ export async function runSearch(options) {
         rows = await BACKENDS.bing({ client, query, limit: fetchLimit, timeoutMs: platformTimeout });
       }
       const selfHost = def.backend ? ENGINE_SELF_HOST[def.backend] : undefined;
+      let dropped = 0;
       const collected = dedupe(
         (rows || [])
           .map((row) => result(id, def, row))
           .filter((item) => {
             const host = hostOf(item.url);
-            if (host === '') return false;
-            if (selfHost && (host === selfHost || host.endsWith(`.${selfHost}`))) return false;
-            if (def.backend === undefined && isLandingPage(item.url)) return false;
+            if (host === '') {
+              dropped += 1;
+              return false;
+            }
+            if (selfHost && (host === selfHost || host.endsWith(`.${selfHost}`))) {
+              dropped += 1;
+              return false;
+            }
+            if (def.list !== true && isJunkResult(item, query)) {
+              dropped += 1;
+              return false;
+            }
+            if (def.backend === undefined && isLandingPage(item.url)) {
+              dropped += 1;
+              return false;
+            }
             return true;
           }),
       );
-      const items0 = def.list === true ? collected : keepRelevant(collected, relevanceTokens(query));
+      const items0 = def.list === true ? collected : keepRelevant(collected, relevanceTokens(query), query);
+      // 抓到了内容但全被判为不相关：多半是搜索引擎返回了降级/风控页（比如整页都是 7-Zip），
+      // 这时候说「没结果」不准确，明确告诉用户是被过滤掉的。
+      const offTopic = def.list !== true && collected.length > 0 && items0.length === 0;
+      if (offTopic) dropped += collected.length;
       let items = items0.slice(0, limit);
       if (id === 'douyin' && items.length > 0) {
         items = await douyinEnrich(client, items, platformTimeout);
@@ -1830,7 +1974,7 @@ export async function runSearch(options) {
         const extra = await siteSearch({ client, query, site: def.site, limit: fetchLimit, timeoutMs: platformTimeout });
         const more = (extra || [])
           .map((row) => result(id, def, row))
-          .filter((item) => !isLandingPage(item.url));
+          .filter((item) => !isLandingPage(item.url) && !isJunkResult(item, query));
         items = dedupe(items.concat(more)).slice(0, limit);
       }
       if (def.list !== true && def.site && query !== '' && items.length < limit) {
@@ -1850,12 +1994,14 @@ export async function runSearch(options) {
       return {
         id,
         label: def.zh,
-        status: items.length > 0 ? 'ok' : 'empty',
+        status: items.length > 0 ? 'ok' : offTopic ? 'blocked' : 'empty',
         note: items.length > 0
           ? items.length === 1 && items[0].extra && items[0].extra.inSite
             ? '只给站内搜索入口（正文结果需要站内渲染）'
-            : `${Date.now() - started}ms`
-          : def.custom
+            : `${Date.now() - started}ms${dropped > 0 ? ` · 滤掉 ${dropped} 条空壳` : ''}`
+          : offTopic
+            ? `抓到的 ${collected.length} 条都不含查询词，已过滤`
+            : def.custom
             ? '没从页面里解析到结果（该站点可能依赖浏览器渲染，可直接在浏览器打开）'
             : def.site
               ? '站点内没抓到正文结果（首页/频道页已过滤），可直接在浏览器打开'

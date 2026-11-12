@@ -214,7 +214,7 @@ node scripts/smoke.mjs "cordis 插件"
 | 平台 | 后端 | 翻页 | 备注 |
 | --- | --- | --- | --- |
 | 必应 | `bing` | ✗ | HTML 解析，恒定 10 条 |
-| 百度 | `baidu` | `pn` | 反爬较凶，失败会降级为浏览器入口 |
+| 百度 | `baidu` | `pn` | 反爬较凶，失败会降级为浏览器入口；真链接取容器上的 `mu` 属性，不是 `link?url=` 中转壳 |
 | 360搜索 | `so360` | `pn` | 结果真链接在 `data-mdurl` |
 | 搜狗 | `sogou` | ✗ | 同上，验证码会降级 |
 | 谷歌 / DuckDuckGo / Brave | `google` / `ddg` / `brave` | — | 需要代理，否则直接给浏览器入口 |
@@ -224,7 +224,7 @@ node scripts/smoke.mjs "cordis 插件"
 | 知乎 | `site:zhihu.com` | — | 登录后可用 `/api/v3/feed` 读首页（本插件只做检索） |
 | 今日头条 | `toutiao` | ✗ | 解析 SSR 页面里的 `<script type="application/json">` |
 | V2EX | `v2ex` | `from` | `sov2ex` 接口 |
-| 微信 | `weixin` | `page` | 搜狗微信，抓公众号文章标题/摘要/账号 |
+| 微信 | `weixin` | `page` | 搜狗微信，抓公众号文章标题/摘要/账号；链接是搜狗中转壳（`/link?url=`），面板上标「中转」 |
 | 抖音热榜 | `douyin-hot` | ✗ | 榜单，不需要关键词，50 条 |
 | 微博热搜 | `weibo-hot` | ✗ | `weibo.com/ajax/side/hotSearch`，50 条，带热度与「热/新/沸」标签 |
 | B站热门 | `bili-hot` | ✗ | `ranking/v2` 排行榜，100 条，带播放/点赞/UP 主 |
@@ -238,6 +238,21 @@ node scripts/smoke.mjs "cordis 插件"
 **站内检索**（`site:` 双引擎兜底，带域名校验、过滤首页）：知乎、博客园、思否、开源中国、Gitee、抖音、小红书、微博、Reddit、MDN、PyPI、淘宝、京东、1688、亚马逊、闲鱼、豆瓣、少数派、Medium、YouTube。
 
 > 加新平台的成本：能直连就在 `engines.js` 的 `BACKENDS` 里加一个 `async (ctx) => rows`，再在 `PLATFORM_LIST` 里挂 `backend`；不能直连就在 `PLATFORM_LIST` 里给个 `site` + `browser(q)`，其余全部自动生效（翻页、去重、过滤、状态药丸都不用管）。
+
+### 空壳结果过滤（v1.13）
+
+搜索结果里有两类「看着有、点开没有」的行，v1.13 起分开处理：
+
+| 类型 | 表现 | 处理 |
+| --- | --- | --- |
+| 中转壳 | 链接是搜索引擎自己的跳转（`baidu.com/link?url=`、`sogou.com/link?url=`、`weixin.sogou.com/link?url=`） | **保留**（点开能跳到正文），URL 行标一个「中转」小标签；百度改为直接读容器上的 `mu` 属性取真地址，离线复解析 19/19 条可还原 |
+| 空条目 | 标题等于查询、标题是「…的最新相关信息」这类占位、链接是引擎自己的结果页（`/s?wd=`） | **丢弃**，平台状态里记「滤掉 N 条空壳」 |
+
+抓到了内容但一条都不相关时（典型场景：搜索引擎把 `7-8岁儿童绘本` 当成 `7`，整页返回 7-Zip），状态显示「抓到的 N 条都不含查询词，已过滤」，而不是含糊的"没结果"。
+
+中文相关性判定改用 2-gram 覆盖率（≥0.5 通过）而不是整串包含：必应会把中文标题切出空格（`7-8 岁儿童绘本`），整串比对会把正常结果全部误杀。
+
+![中转壳标记与卡片](docs/panel-shells.png)
 
 ### 榜单与信息流（v1.7 / v1.8）
 
