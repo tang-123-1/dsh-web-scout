@@ -2,6 +2,19 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
+## 1.7.0 — 2026-11-12
+
+### 新增
+- **知乎信息流平台**：「知乎推荐」（`/api/v3/feed/topstory/recommend`）与「知乎关注」（`/api/v3/feed/topstory`），每个平台按页取 6 条，`pages` 控制页数；解析回答 / 文章 / 视频 / 想法四种 `target`，带作者、赞数、评论数、日期。
+- 两者都标 `list: true`：不消费关键词、不参与相关性过滤，也不进默认 9 源（避免污染普通检索），需要时在「站点」分区里加入芯片条。
+- 登录门禁：后端先查 cookie jar 里有没有 `z_c0`，没有就抛 `login` 型 blocked，状态药丸显示「需要登录：还没登录知乎…」，而不是含糊的网络错误。
+- 空查询放宽：`runSearch` 在“所选平台全是信息流”时允许空 `query`；`api.js` 同样加了 `feedOnly` 判断，不会再把对话内容硬塞成查询词。
+- `platformCatalog()` 的 `login` 字段支持 `needsLogin` 回退：知乎推荐/关注直接复用 `https://www.zhihu.com/signin`。
+
+### 工程
+- 新增 GitHub Actions：`ci.yml`（语法/清单校验）、`release.yml`（打 tag 自动打包 zip/tgz 并挂到 Release）。
+- 仓库整理：`LICENSE`（MIT）、`.gitignore`、`.gitattributes`、`CHANGELOG.md`、`scripts/smoke.mjs` 离线冒烟测试；`browserAuth.js` 补齐 macOS/Linux 的 Edge/Chrome 路径。
+
 ## 1.6.0 — 2026-11-12
 
 ### 数据量

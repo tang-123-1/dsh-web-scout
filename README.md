@@ -1,7 +1,7 @@
 # web-scout · DeepSeek Harness 联网检索插件
 
-> 按对话内容自动联网检索，39 个平台后端，站内搜索、登录态复用、可拖动缩放的结果面板。
-> A conversation-aware web search plugin for [DeepSeek Harness](https://github.com/deepseek-ai) (Cordis bundle). 39 platform backends, native in-site search, cookie-based login reuse, a draggable/resizable result panel.
+> 按对话内容自动联网检索，41 个平台后端，站内搜索、登录态复用、可拖动缩放的结果面板。
+> A conversation-aware web search plugin for [DeepSeek Harness](https://github.com/deepseek-ai) (Cordis bundle). 41 platform backends, native in-site search, cookie-based login reuse, a draggable/resizable result panel.
 
 ![许可证](https://img.shields.io/badge/license-MIT-blue.svg)
 ![版本](https://img.shields.io/badge/version-1.6.0-informational.svg)
@@ -37,7 +37,7 @@
 
 ## 功能
 
-- **39 个平台**：3 类后端——直连接口（JSON/HTML 解析）、`site:` 站内检索（必应 + 360 双引擎，带域名校验）、榜单类（抖音热榜，不需要关键词）。
+- **41 个平台**：4 类后端——直连接口（JSON/HTML 解析）、`site:` 站内检索（必应 + 360 双引擎，带域名校验）、榜单/信息流（抖音热榜、知乎推荐、知乎关注，不需要关键词）、自定义站点。
 - **多页抓取**：`limit`（每源条数，≤30）× `pages`（每源页数，≤4）× `maxPlatforms`（同时跑几个源，≤14）。默认 `12 × 3 × 10`，实测「龙珠」一次 70–90 条，`20 × 4` 可到 103–121 条。
 - **相关性过滤**：标题和摘要都不含关键词的结果直接丢掉（修掉 B 站搜「龙珠」返回「赵云-飞龙神将」这类“猜词”噪音），过滤后为空会走一次 `site:` 兜底。
 - **落地页过滤**：站点类平台不再把首页/频道页（`/`、`/hot`、`/search`、`/topic`）当结果返回。
@@ -92,7 +92,7 @@ POST http://127.0.0.1:3209/web-scout/api
 {"op":"catalog"}
 ```
 
-返回 `{"ok":true,...}` 且 `platforms` 长度为 39、`chips` 为 8 个默认芯片，就说明 Host 和客户端都已就绪。
+返回 `{"ok":true,...}` 且 `platforms` 长度为 41、`chips` 为 8 个默认芯片，就说明 Host 和客户端都已就绪。
 
 离线验证（不启动 DSH，直接跑引擎）：
 
@@ -153,11 +153,22 @@ node scripts/smoke.mjs "cordis 插件"
 | V2EX | `v2ex` | `from` | `sov2ex` 接口 |
 | 微信 | `weixin` | `page` | 搜狗微信，抓公众号文章标题/摘要/账号 |
 | 抖音热榜 | `douyin-hot` | ✗ | 榜单，不需要关键词，50 条 |
+| 知乎推荐 | `zhihu-recommend` | `page_number` | **需要登录**；首页推荐流，6 条/页 |
+| 知乎关注 | `zhihu-follow` | `page_number` | **需要登录**；关注流，6 条/页 |
 | GitHub / Stack Overflow / npm / Hacker News / 维基百科 | 各自接口 | `page` | Stack Overflow 与维基需要代理 |
 
 **站内检索**（`site:` 双引擎兜底，带域名校验、过滤首页）：知乎、博客园、思否、开源中国、Gitee、抖音、小红书、微博、Reddit、MDN、PyPI、淘宝、京东、1688、亚马逊、闲鱼、豆瓣、少数派、Medium、YouTube。
 
 > 加新平台的成本：能直连就在 `engines.js` 的 `BACKENDS` 里加一个 `async (ctx) => rows`，再在 `PLATFORM_LIST` 里挂 `backend`；不能直连就在 `PLATFORM_LIST` 里给个 `site` + `browser(q)`，其余全部自动生效（翻页、去重、过滤、状态药丸都不用管）。
+
+### 信息流平台（v1.7）
+
+「抖音热榜」「知乎推荐」「知乎关注」不消费关键词——选中它们、输入框留空直接搜，拿到的就是当前榜单/信息流。
+
+- 抖音热榜：`iesdouyin` 榜单接口，50 条，带排名/热度/标签位。
+- 知乎推荐 / 知乎关注：`/api/v3/feed/topstory*`，6 条/页，`pages` 控制翻几页。**必须先登录知乎**，否则状态药丸会显示「需要登录：还没登录知乎…」。
+- 这三个平台不在默认 9 源里（混进关键词检索会全是噪音），需要时在「站点」分区里点一下加到芯片条。
+- 只选信息流平台时，插件不会把对话内容硬塞成查询词（`feedOnly` 分支），API 用 `{"op":"search","platforms":["zhihufollow"]}` 即可。
 
 ## 登录状态
 
@@ -214,6 +225,9 @@ Cookie 存在 `~/.dsh/web-scout.json` 的 `cookies` 字段里，**不要提交�
 **搜出来的结果很少？**
 三个开关：`limit`（每源条数）、`pages`（翻页数）、`maxPlatforms`（参与源数）。默认 `12/3/10`；拉到 `20/4/14` 大约能到 100–120 条（更多源不一定更好，噪音也会变多）。
 
+**「知乎推荐」显示需要登录？**
+知乎信息流走后端接口，必须有 `z_c0` 登录 cookie。点「登录与账号 → 插件浏览器」登录一次，再点「读取登录」；用「本机导入」也行，但要先关掉浏览器（cookie 库被独占锁）。
+
 **安全吗？**
 插件只做三件事：发 HTTP 请求、起一个独立 profile 的浏览器读 cookie、用系统默认浏览器打开链接。没有遥测，不上传任何数据；cookie 只存在本地配置文件里。
 
@@ -223,7 +237,7 @@ Cookie 存在 `~/.dsh/web-scout.json` 的 `cookies` 字段里，**不要提交�
 web-scout/
 ├── index.js          Host 入口：注册 3 个工具 + systemPrompt + /web-scout/api 路由 + 客户端自愈
 ├── api.js            接口分发（catalog/search/read/open/config/chips/platform.*/login.*/browser.*/graph）
-├── engines.js        39 个平台定义 + 各站后端 + 翻页/去重/相关性过滤/站内兜底
+├── engines.js        41 个平台定义 + 各站后端 + 翻页/去重/相关性过滤/站内兜底
 ├── net.js            零依赖 HTTP 客户端（手动重定向、gzip/br/zstd、GBK、CONNECT 隧道、CookieJar）
 ├── store.js          配置持久化（原子写、防抖、版本迁移）
 ├── login.js          登录探针与判定（require 白名单）
@@ -256,7 +270,7 @@ curl -s -X POST http://127.0.0.1:3209/web-scout/api \
 cd D:/dshcs/web-scout
 git init
 git add .
-git commit -m "feat: web-scout 1.6.0 — 39 平台联网检索插件"
+git commit -m "feat: web-scout 1.7.0 — 41 平台联网检索插件"
 git branch -M main
 git remote add origin https://github.com/[GITHUB_OWNER]/web-scout.git
 git push -u origin main

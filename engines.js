@@ -110,6 +110,8 @@ export const PLATFORM_LIST = [
   { id: 'brave', zh: 'Brave', en: 'Brave Search', group: 'general', backend: 'brave', browser: (q) => `https://search.brave.com/search?q=${enc(q)}`, needsTunnel: true },
 
   { id: 'zhihu', zh: '知乎', en: 'Zhihu', group: 'cn', site: 'zhihu.com', browser: (q) => `https://www.zhihu.com/search?type=content&q=${enc(q)}` },
+  { id: 'zhihurec', zh: '知乎推荐', en: 'Zhihu Recommend', group: 'social', backend: 'zhihu-recommend', list: true, needsLogin: 'zhihu', browser: () => 'https://www.zhihu.com/' },
+  { id: 'zhihufollow', zh: '知乎关注', en: 'Zhihu Following', group: 'social', backend: 'zhihu-follow', list: true, needsLogin: 'zhihu', browser: () => 'https://www.zhihu.com/follow' },
   { id: 'csdn', zh: 'CSDN', en: 'CSDN', group: 'cn', backend: 'csdn', browser: (q) => `https://so.csdn.net/so/search?q=${enc(q)}` },
   { id: 'juejin', zh: '掘金', en: 'Juejin', group: 'cn', backend: 'juejin', browser: (q) => `https://juejin.cn/search?query=${enc(q)}` },
   { id: 'cnblogs', zh: '博客园', en: 'Cnblogs', group: 'cn', site: 'cnblogs.com', browser: (q) => `https://zzk.cnblogs.com/s?w=${enc(q)}` },
@@ -332,6 +334,8 @@ const ALIASES = new Map([
   ['谷歌', 'google'],
   ['google', 'google'],
   ['duckduckgo', 'ddg'],
+  ['知乎推荐', 'zhihurec'],
+  ['知乎关注', 'zhihufollow'],
   ['知乎', 'zhihu'],
   ['掘金', 'juejin'],
   ['博客园', 'cnblogs'],
@@ -388,7 +392,7 @@ export function platformCatalog() {
     backend: item.custom ? item.url || '自定义' : item.backend ? item.backend : `site:${item.site}`,
     needsTunnel: item.needsTunnel === true,
     domain: cookieDomainFor(item.id),
-    login: loginUrlFor(item.id),
+    login: loginUrlFor(item.id) || (item.needsLogin ? loginUrlFor(item.needsLogin) : ''),
     custom: item.custom === true,
   }));
 }
@@ -399,6 +403,8 @@ export function platformCatalog() {
 
 const PLATFORM_HINTS = [
   [/b\s*站|哔哩|bilibili/i, 'bilibili'],
+  [/知乎推荐|推荐流/i, 'zhihurec'],
+  [/知乎关注|关注流/i, 'zhihufollow'],
   [/知乎/i, 'zhihu'],
   [/小红书|xhs/i, 'xiaohongshu'],
   [/抖音|douyin/i, 'douyin'],
@@ -1005,6 +1011,94 @@ backends.weixin = async (ctx) => {
   return items.slice(0, Math.max(limit, 10));
 };
 
+// ---- 知乎信息流（v1.7）：按页取「推荐 / 关注」，与关键词无关，需要登录 cookie（z_c0） ----
+
+const ZHIHU_FEED_URL = {
+  'zhihu-recommend': (page) =>
+    `https://www.zhihu.com/api/v3/feed/topstory/recommend?action=down&ad_interval=-1&desktop=true&page_number=${page}&limit=10`,
+  'zhihu-follow': (page) => `https://www.zhihu.com/api/v3/feed/topstory?limit=10&desktop=true&page_number=${page}`,
+};
+
+function zhihuFeedRow(target) {
+  if (!target || typeof target !== 'object') return undefined;
+  const type = String(target.type || '');
+  const author = (target.author && target.author.name) || '';
+  const created = Number(target.created_time || 0);
+  const date = created > 0 ? new Date(created * 1000).toISOString().slice(0, 10) : '';
+  const text = (html, max = 180) => stripTags(String(html || '')).replace(/\s+/g, ' ').trim().slice(0, max);
+  const extra = (kind) => ({ kind, author, votes: target.voteup_count, comments: target.comment_count, date });
+
+  if (type === 'answer' && target.question) {
+    return {
+      title: target.question.title || target.question.name || '',
+      url: `https://www.zhihu.com/question/${target.question.id}/answer/${target.id}`,
+      snippet: text(target.excerpt),
+      source: '知乎',
+      extra: extra('回答'),
+    };
+  }
+  if (type === 'article') {
+    return {
+      title: target.title || '',
+      url: `https://zhuanlan.zhihu.com/p/${target.id}`,
+      snippet: text(target.excerpt),
+      source: '知乎',
+      extra: extra('文章'),
+    };
+  }
+  if (type === 'zvideo') {
+    return {
+      title: target.title || '',
+      url: target.url || `https://www.zhihu.com/zvideo/${target.id}`,
+      snippet: text(target.description || target.excerpt),
+      source: '知乎',
+      extra: extra('视频'),
+    };
+  }
+  if (type === 'pin') {
+    const body = target.content || {};
+    return {
+      title: text(body.title || body.content, 60) || '想法',
+      url: target.url || `https://www.zhihu.com/pin/${target.id}`,
+      snippet: text(body.content),
+      source: '知乎',
+      extra: extra('想法'),
+    };
+  }
+  const fallback = target.title || (target.question && target.question.title) || '';
+  if (!fallback) return undefined;
+  return { title: fallback, url: target.url || '', snippet: text(target.excerpt), source: '知乎', extra: extra(type || '内容') };
+}
+
+for (const name of Object.keys(ZHIHU_FEED_URL)) {
+  backends[name] = async (ctx) => {
+    const { client, limit, timeoutMs, page = 1, pages = 1 } = ctx;
+    const cookie = client.jar.header('www.zhihu.com') || '';
+    if (!/(^|;\s*)z_c0=/.test(cookie)) {
+      const error = new Error('还没登录知乎：在面板「登录与账号 → 插件浏览器」里登录一次，再点「读取登录」');
+      error.login = true;
+      error.blocked = true;
+      throw error;
+    }
+    const collected = [];
+    const last = Math.min(4, page + Math.max(1, pages) - 1);
+    for (let current = page; current <= last; current += 1) {
+      const { data } = await client.json(ZHIHU_FEED_URL[name](current), {
+        headers: { referer: 'https://www.zhihu.com/' },
+        timeoutMs,
+      });
+      const items = Array.isArray(data && data.data) ? data.data : [];
+      for (const item of items) {
+        const row = zhihuFeedRow(item.target || item);
+        if (row) collected.push(row);
+      }
+      if (items.length === 0) break;
+      if (dedupe(collected).length >= limit) break;
+    }
+    return dedupe(collected).slice(0, Math.max(limit, 6));
+  };
+}
+
 backends.wikipedia = async (ctx) => {
   const { client, query, limit, timeoutMs } = ctx;
   const { data } = await client.json(
@@ -1177,9 +1271,14 @@ const PAGED_BACKENDS = new Set(['csdn', 'v2ex', 'github', 'stackexchange', 'hack
 
 export async function runSearch(options) {
   const query = String(options.query || '').trim();
-  if (query === '') throw new Error('query is empty');
   const fallback = Array.isArray(options.defaultPlatforms) && options.defaultPlatforms.length > 0 ? options.defaultPlatforms : ['bing', 'so360'];
   const ids = resolvePlatforms(options.platforms, fallback, options.hints).slice(0, Math.min(14, Math.max(1, Number(options.maxPlatforms) || 10)));
+  // 信息流平台（抖音热榜 / 知乎推荐 / 知乎关注）与关键词无关，允许空查询。
+  const feedOnly = ids.length > 0 && ids.every((id) => {
+    const def = PLATFORMS.get(id);
+    return Boolean(def && def.list === true);
+  });
+  if (query === '' && !feedOnly) throw new Error('query is empty');
   const limit = Math.min(30, Math.max(1, Number(options.limit) || 8));
   // 一个平台可以抓多页（v1.6）：超量抓取后再过滤，否则相关性过滤会把结果削掉一半。
   const pages = Math.min(4, Math.max(1, Number(options.pages) || 2));
@@ -1276,7 +1375,9 @@ export async function runSearch(options) {
         label: def.zh,
         status: blocked ? 'blocked' : 'error',
         note: blocked
-          ? `需要浏览器：${error.message}`
+          ? error.login === true
+            ? `需要登录：${error.message}`
+            : `需要浏览器：${error.message}`
           : def.needsTunnel
             ? `${summarizeError(error)}（该站点通常需要代理，已给出浏览器入口）`
             : summarizeError(error),

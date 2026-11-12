@@ -162,10 +162,6 @@ export function createApi({ store, defaults, readMessages, clientGraph }) {
           }
         }
         const context = typeof payload.context === 'string' ? payload.context : '';
-        let query = cleanQuery(payload.query || '');
-        if (query === '' && messages.length > 0) query = contextQuery(messages, context);
-        if (query === '' && context !== '') query = cleanQuery(context).split(/\s+/).slice(0, 12).join(' ');
-        if (query === '') throw new Error('缺少查询词');
         const hinted = inferPlatforms(`${payload.query || ''} ${context} ${messages.slice(-6).map(messageText).join(' ').slice(-600)}`);
         // 「自动」= 默认平台 + 从这句话/上下文里识别出的站点；只用默认两个引擎时结果会显得很少。
         const platforms = resolvePlatforms(
@@ -173,6 +169,15 @@ export function createApi({ store, defaults, readMessages, clientGraph }) {
           settings.defaultPlatforms,
           hinted,
         ).slice(0, settings.maxPlatforms);
+        // 纯信息流（抖音热榜 / 知乎推荐 / 知乎关注）与关键词无关，别把对话内容硬塞成查询词。
+        const feedOnly = platforms.length > 0 && platforms.every((id) => {
+          const def = PLATFORMS.get(id);
+          return Boolean(def && def.list === true);
+        });
+        let query = cleanQuery(payload.query || '');
+        if (query === '' && messages.length > 0 && !feedOnly) query = contextQuery(messages, context);
+        if (query === '' && context !== '' && !feedOnly) query = cleanQuery(context).split(/\s+/).slice(0, 12).join(' ');
+        if (query === '' && !feedOnly) throw new Error('缺少查询词');
         const limit = Math.min(30, Math.max(1, Number(payload.limit) || settings.limit));
         const pages = Math.min(4, Math.max(1, Number(payload.pages) || Number(settings.pages) || 3));
         const timeoutMs = Math.min(30000, Math.max(3000, Number(payload.timeoutMs) || settings.timeoutMs));
