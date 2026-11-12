@@ -19,6 +19,9 @@ window.__ModuleLoader__.load({
         search: '搜索',
         searching: '检索中…',
         close: '关闭',
+        toChat: '加入对话',
+        chatAdded: '已加入输入框，回车即可发送',
+        chatFailed: '输入框正忙，稍后再试',
         open: '打开',
         panel: '联网检索结果',
         proxy: '代理（可选，如 127.0.0.1:7890）',
@@ -93,6 +96,9 @@ window.__ModuleLoader__.load({
         search: 'Search',
         searching: 'Searching…',
         close: 'Close',
+        toChat: 'To chat',
+        chatAdded: 'Added to the composer — press Enter to send',
+        chatFailed: 'Composer is busy, try again',
         open: 'Open',
         panel: 'Web scout results',
         proxy: 'Proxy (optional, e.g. 127.0.0.1:7890)',
@@ -715,6 +721,7 @@ function statusStyle(status) {
       const toggleSection = (name) => setOpen((current) => (current === name ? '' : name));
       const [form, setForm] = React.useState({ name: '', url: '', site: '', kind: 'auto' });
   const [playing, setPlaying] = React.useState('');
+  const [chatNote, setChatNote] = React.useState('');
       const [view, setView] = React.useState(() => {
         try {
           return window.localStorage.getItem('web-scout-view') === 'compact' ? 'compact' : 'card';
@@ -1065,7 +1072,67 @@ function statusStyle(status) {
         }
       };
 
-      const openUrl = async (url) => {
+      const insertToComposer = (block) => {
+    const actions = props.inputActions;
+    try {
+      if (actions && typeof actions.insertQuote === 'function' && actions.insertQuote(block)) return 'quote';
+    } catch {
+      /* 输入框处于非 plain 阶段时会抛，继续走兜底 */
+    }
+    try {
+      if (actions && typeof actions.insertText === 'function' && typeof actions.captureInsertion === 'function') {
+        const span = actions.captureInsertion();
+        if (actions.insertText(block + '\n', span)) return 'text';
+      }
+    } catch {
+      /* 同上 */
+    }
+    try {
+      if (actions && typeof actions.setDraft === 'function') {
+        actions.setDraft(block);
+        return 'draft';
+      }
+    } catch {
+      /* 同上 */
+    }
+    return '';
+  };
+
+  const resultLine = (item, index) => {
+    const parts = [];
+    parts.push(`${index}. ${item.title || '(无标题)'}`);
+    const meta = [item.platformLabel || item.platform, kindText(t, item.kind || 'web')];
+    if (item.extra && item.extra.author) meta.push(`@${item.extra.author}`);
+    if (item.extra && item.extra.authorTotal) meta.push(`共 ${item.extra.authorTotal} 个视频`);
+    parts.push(`   ${meta.join(' · ')}`);
+    parts.push(`   ${item.url}`);
+    if (item.snippet) parts.push(`   ${String(item.snippet).replace(/\s+/g, ' ').slice(0, 160)}`);
+    return parts.join('\n');
+  };
+
+  const buildBlock = (items) => {
+    const query = (data && data.query) || '';
+    const platforms = [];
+    for (const item of items) {
+      const label = item.platformLabel || item.platform;
+      if (label && !platforms.includes(label)) platforms.push(label);
+    }
+    const head = query
+      ? `联网检索「${query}」（${platforms.join(' / ')}）的结果：`
+      : `榜单结果（${platforms.join(' / ')}）：`;
+    const body = items.map((item, index) => resultLine(item, index + 1)).join('\n');
+    const tail = '请基于以上结果继续，需要时引用对应链接。';
+    return `${head}\n\n${body}\n\n${tail}`;
+  };
+
+  const toChat = (items) => {
+    if (items.length === 0) return;
+    const mode = insertToComposer(buildBlock(items));
+    setChatNote(mode ? t('chatAdded') : t('chatFailed'));
+    if (mode) window.setTimeout(() => setChatNote(''), 4000);
+  };
+
+  const openUrl = async (url) => {
         setError('');
         try {
           await post('open', { url: url });
@@ -1127,6 +1194,18 @@ function statusStyle(status) {
                     )
                   : null,
               ),
+              rows.length > 0
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      title: t('toChat'),
+                      style: merge(S.viewBtn, { marginRight: '2px', color: C.brand }),
+                      onClick: () => toChat(seenRows.slice(0, 8)),
+                    },
+                    t('toChat'),
+                  )
+                : null,
               h(
                 'button',
                 {
@@ -1448,6 +1527,7 @@ function statusStyle(status) {
                   )
                 : null,
               data && rows.length === 0 ? h('div', { style: S.hint }, t('empty')) : null,
+              chatNote ? h('div', { style: merge(S.hint, { color: C.ok }) }, chatNote) : null,
               seenRows.map((item) => {
                 const kind = item.kind || 'web';
                 const embed = typeof item.embed === 'string' ? item.embed : '';
@@ -1499,6 +1579,7 @@ function statusStyle(status) {
                               ? ` · ${fill(t('videos'), { n: item.extra.authorTotal })}`
                               : ''),
                       ),
+                      h('button', { type: 'button', style: S.viewBtn, title: t('toChat'), onClick: () => toChat([item]) }, '＋'),
                       h('button', { type: 'button', style: S.viewBtn, onClick: () => openUrl(item.url) }, t('open')),
                     ),
                     shown
@@ -1610,6 +1691,7 @@ function statusStyle(status) {
                             shown ? t('collapse') : t('play'),
                           )
                         : null,
+                      h('button', { type: 'button', style: S.button, title: t('toChat'), onClick: () => toChat([item]) }, '＋'),
                       h('button', { type: 'button', style: S.button, onClick: () => openUrl(item.url) }, t('open')),
                     ),
                   ),
