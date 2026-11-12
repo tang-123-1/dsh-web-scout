@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 语法检查
+        run: |
+          for file in index.js api.js engines.js net.js store.js open.js login.js \
+                      browserCookies.js browserAuth.js client.js scripts/smoke.mjs; do
+            echo "check $file"
+            node --check "$file"
+          done
+
+      - name: 校验 JSON
+        run: |
+          node -e "for (const f of ['package.json','locale/zh.json','locale/en.json']) JSON.parse(require('fs').readFileSync(f,'utf8')); console.log('json ok')"
+
+      - name: 校验包清单
+        run: |
+          node -e "const p=require('./package.json'); if (p.dsh?.bundle?.patch!=='./cordis.patch.yml') throw new Error('bundle patch missing'); if (!p.dsh?.client?.platform) throw new Error('client platform missing'); console.log('manifest ok', p.version)"
