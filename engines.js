@@ -1,6 +1,8 @@
 // Platform registry + search backends. Every platform resolves to either a JSON/HTML backend or a site-scoped web search.
 import crypto from 'node:crypto';
 import { absolutize, createClient, decodeEntities, hostOf, htmlToText, stripTags, titleOf } from './net.js';
+import { providers } from './providers/registry.js';
+import { externalProviderDir, loadExternalProviders } from './providers/external.js';
 
 const enc = (value) => encodeURIComponent(value);
 const UA_MOBILE =
@@ -264,6 +266,19 @@ export const PLATFORM_LIST = [
 
 export const PLATFORMS = new Map(PLATFORM_LIST.map((item) => [item.id, item]));
 
+// 外部 provider 带来的平台定义（v1.15）。自定义站点仍然直接写进 PLATFORM_LIST。
+let EXTERNAL_PLATFORMS = [];
+
+/** 按 PLATFORM_LIST + 外部 provider 重建 Map（原地改，保持导出引用有效）。 */
+export function rebuildPlatformMap() {
+  const next = new Map();
+  for (const item of PLATFORM_LIST) next.set(item.id, item);
+  for (const item of EXTERNAL_PLATFORMS) next.set(item.id, item);
+  PLATFORMS.clear();
+  for (const [id, def] of next) PLATFORMS.set(id, def);
+  return PLATFORMS.size;
+}
+
 // ---------------------------------------------------------------------------
 // user-defined sites (抖音风格的自定义站点：给名字 + 搜索地址模板就能用)
 // ---------------------------------------------------------------------------
@@ -372,18 +387,15 @@ export function registerCustomPlatforms(list) {
       site: site || undefined,
       browser: (query) => customUrl(template, query),
     };
-    PLATFORMS.set(id, definition);
     const index = PLATFORM_LIST.findIndex((entry) => entry.id === id);
     if (index >= 0) PLATFORM_LIST[index] = definition;
     else PLATFORM_LIST.push(definition);
-  }
-  for (const id of [...PLATFORMS.keys()]) {
-    if (id.startsWith('custom:') && !wanted.has(id)) PLATFORMS.delete(id);
   }
   for (let index = PLATFORM_LIST.length - 1; index >= 0; index -= 1) {
     const entry = PLATFORM_LIST[index];
     if (entry && entry.id.startsWith('custom:') && !wanted.has(entry.id)) PLATFORM_LIST.splice(index, 1);
   }
+  rebuildPlatformMap();
   return PLATFORM_LIST.length;
 }
 
@@ -507,7 +519,8 @@ const ALIASES = new Map([
 ]);
 
 export function platformCatalog() {
-  return PLATFORM_LIST.map((item) => ({
+  // 用 PLATFORMS（含外部 provider 与自定义站点），不是只有内置的 PLATFORM_LIST
+  return [...PLATFORMS.values()].map((item) => ({
     id: item.id,
     label: item.zh,
     labelEn: item.en,
@@ -519,6 +532,7 @@ export function platformCatalog() {
     custom: item.custom === true,
     list: item.list === true,
     kind: kindOf(item),
+    source: item.providerSource || (item.custom ? 'custom' : 'builtin'),
   }));
 }
 
@@ -1803,6 +1817,103 @@ backends.bilibili = async (ctx) => {
 export const BACKENDS = backends;
 
 // ---------------------------------------------------------------------------
+// providers（v1.15）：把「平台定义 + 后端调用」收成一个 provider 对象
+// ---------------------------------------------------------------------------
+
+/** 内置平台 → provider（search 直接转调旧后端，行为与 v1.14 完全一致）。 */
+function providerFor(def) {
+  const backend = def.backend ? BACKENDS[def.backend] : null;
+  const singlePage = def.list === true || !def.backend || !PAGED_BACKENDS.has(def.backend);
+  return {
+    id: def.id,
+    label: def.zh || def.id,
+    labelEn: def.en || '',
+    group: def.group || 'general',
+    kind: def.kind || 'auto',
+    list: def.list === true,
+    needsLogin: def.needsLogin || '',
+    needsTunnel: def.needsTunnel === true,
+    site: def.site || '',
+    backend: def.backend || '',
+    singlePage,
+    browser: typeof def.browser === 'function' ? def.browser : null,
+    source: 'builtin',
+    async search(ctx) {
+      const { client, query, limit, timeoutMs, page } = ctx;
+      if (backend) return backend({ client, query, limit, timeoutMs, page, pages: ctx.pages });
+      if (def.url) return fetchCustom({ client, def, query, limit });
+      if (def.site) return siteSearch({ client, query, site: def.site, limit, timeoutMs });
+      return BACKENDS.bing({ client, query, limit, timeoutMs, page });
+    },
+  };
+}
+
+/** 外部 provider → 平台定义（catalog / chips / inferPlatforms 都靠这张表）。 */
+function platformDefFor(provider) {
+  return {
+    id: provider.id,
+    zh: provider.label,
+    en: provider.labelEn || provider.label,
+    group: provider.group,
+    kind: provider.kind,
+    list: provider.list,
+    needsLogin: provider.needsLogin || undefined,
+    needsTunnel: provider.needsTunnel || undefined,
+    site: provider.site || undefined,
+    providerSource: provider.source,
+    browser: provider.browser || ((query) => (provider.site ? `https://${provider.site}/` : `https://www.bing.com/search?q=${enc(query)}`)),
+  };
+}
+
+export const PROVIDERS = providers;
+
+/** 内置 provider 注册（幂等，重复调用只覆盖）。 */
+export function registerBuiltinProviders() {
+  const results = [];
+  for (const def of PLATFORM_LIST) {
+    if (def.id.startsWith('custom:')) continue;
+    results.push(providers.register(providerFor(def), { replace: true, source: 'builtin' }));
+  }
+  return results;
+}
+
+/**
+ * 初始化 provider 层：内置 → 外部目录 → 重建平台表。
+ * 外部目录读不到/写错都不抛，错误进 report.errors。
+ */
+export async function initProviders(options = {}) {
+  registerBuiltinProviders();
+  const report = await loadExternalProviders({ dir: options.directory || externalProviderDir(), registry: providers });
+  const added = providers.bySource('external');
+  EXTERNAL_PLATFORMS = added.map(platformDefFor);
+  rebuildPlatformMap();
+  return {
+    builtin: providers.bySource('builtin').length,
+    external: added.map((provider) => provider.id),
+    platforms: PLATFORMS.size,
+    dir: report.dir,
+    skipped: report.skipped,
+    errors: report.errors,
+  };
+}
+
+/** provider 概览（HTTP op provider.list 用）。 */
+export function providerCatalog() {
+  return providers.list().map((provider) => ({
+    id: provider.id,
+    label: provider.label,
+    labelEn: provider.labelEn,
+    source: provider.source,
+    kind: provider.kind,
+    list: provider.list,
+    site: provider.site,
+    needsLogin: provider.needsLogin,
+    searchable: typeof provider.search === 'function',
+  }));
+}
+
+
+// ---------------------------------------------------------------------------
 // orchestration
 // ---------------------------------------------------------------------------
 
@@ -1917,7 +2028,13 @@ export async function runSearch(options) {
     const platformTimeout = def.needsTunnel ? Math.min(timeoutMs, 6000) : timeoutMs;
     try {
       let rows;
-      if (def.backend && BACKENDS[def.backend]) {
+      const provider = providers.get(id);
+      if (provider && typeof provider.search === 'function') {
+        rows = await collectPages(
+          (page) => provider.search({ client, query, limit: fetchLimit, timeoutMs: platformTimeout, page, pages }),
+          { pages, limit: fetchLimit, singlePage: provider.singlePage === true || def.list === true },
+        );
+      } else if (def.backend && BACKENDS[def.backend]) {
         rows = await collectPages((page) => BACKENDS[def.backend]({ client, query, limit: fetchLimit, timeoutMs: platformTimeout, page, pages }), { pages, limit: fetchLimit, singlePage: def.list === true || !PAGED_BACKENDS.has(def.backend) });
       } else if (def.url) {
         rows = await fetchCustom({ client, def, query, limit: fetchLimit });

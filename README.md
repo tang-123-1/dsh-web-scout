@@ -199,6 +199,46 @@ node scripts/smoke.mjs "cordis 插件"
 
 ![命中缓存的标题徽标与刷新按钮](docs/panel-cache.png)
 
+### 可插拔 Provider（v1.15）
+
+后端不再写死在 `engines.js` 里。每个站点就是一个 provider 对象，内置的 46 个和外部的一样走同一个接口：
+
+```js
+// <DSH profile>/web-scout-providers/mysite.mjs
+export default {
+  id: 'mysite',                 // 小写，可含 . _ -
+  label: '我的站点',             // 面板里显示的名字
+  kind: 'article',              // video/article/qa/forum/hot/shop/code/doc/social/web
+  site: 'example.com',          // 可选：没有 search 时用它走 site: 兜底
+  browser: (q) => `https://example.com/search?q=${encodeURIComponent(q)}`,
+  async search({ query, limit, client, timeoutMs, page }) {
+    // 返回 [{ title, url, snippet, extra?, thumb?, embed? }]
+    return [{ title: `${query} 的结果`, url: 'https://example.com/a', snippet: '……' }];
+  },
+};
+```
+
+放进 `<DSH profile>/web-scout-providers/`（Windows 上是 `C:\Users\<你>\.dsh\profiles\desktop\web-scout-providers\`），然后：
+
+```bash
+curl -s -X POST http://127.0.0.1:3209/web-scout/api -H "content-type: application/json" \
+  -d '{"op":"provider.reload"}'
+```
+
+它立刻出现在面板「站点」网格与 `catalog.platforms`（`source:"external"`）里，也能直接 `{"op":"search","platforms":["mysite"]}`。
+
+| 能力 | 说明 |
+| --- | --- |
+| 静态校验 | id / label / search 或 browser 缺失、kind 非法、id 重复都会被拒，错误记进 `provider.reload.errors`，**不会影响插件其它功能** |
+| 热加载 | 每次 reload 带 `?v=<时间戳>`，改完文件刷新就生效，不用重启 Host |
+| 隔离 | 单个文件语法错误、抛异常、超过 256 KB、目录读不了，都只丢这一条 |
+| 来源标记 | `provider.list` 里每个 provider 带 `source: builtin / external / custom`，面板与 catalog 同步显示 |
+| 安全边界 | 只用 Node 原生 `import`，不执行安装脚本，不联网下载代码——文件是你自己放的 |
+
+内置 provider 仍然转调原来的后端函数（`BACKENDS[id]`），所以 v1.14 的行为、翻页、缓存、过滤全部不变；`_probe/verify-providers.mjs` 里有一条「provider 与直接调后端结果完全一致」的等价性断言。
+
+![外部 provider 出现在站点网格里（最后一项「示例站点」）](docs/panel-providers.png)
+
 ### 三个工具（Agent 侧）
 
 | 工具 | 参数 | 用途 |
@@ -217,6 +257,7 @@ node scripts/smoke.mjs "cordis 插件"
 | `search` | `query?` `platforms?` `limit?` `pages?` `context?` `sessionId?` `open?` `refresh?` | 检索并记录历史；命中缓存直接返回（`refresh:true` 强制重新联网） |
 | `read` | `url` `maxChars?` | 抓网页正文（同样走缓存） |
 | `cache.stats` / `cache.clear` | — | 缓存统计（命中数/行数/字节/文件）/ 清空缓存 |
+| `provider.list` / `provider.reload` | — | provider 清单（含来源）/ 重新加载外部 provider 目录 |
 | `open` | `url?` `platform?` `query?` | 系统浏览器打开 |
 | `config` | `patch:{}` | 改代理 / 条数 / 默认平台等 |
 | `chips` | `chips:[]` | 保存芯片条 |

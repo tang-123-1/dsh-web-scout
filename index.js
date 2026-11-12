@@ -7,6 +7,9 @@ import {
   runSearch,
   readPage,
   browserUrlFor,
+  initProviders,
+  providerCatalog,
+  PLATFORMS,
 } from './engines.js';
 import { openInBrowser } from './open.js';
 import { ScoutStore } from './store.js';
@@ -201,11 +204,31 @@ export function apply(ctx, config = {}) {
   const cache = createCache({
     ttlMs: Math.min(24 * 60 * 60 * 1000, Math.max(60 * 1000, Number(defaults.cacheTtlMs) || 6 * 60 * 60 * 1000)),
   });
+  // provider 层（v1.15）：内置 provider + 外部 web-scout-providers/*.mjs。
+  // 初始化失败只降级（继续用内置），不能把插件整体搞挂。
+  const providerState = { report: null, error: '' };
+  const startupProviders = initProviders()
+    .then((report) => {
+      providerState.report = report;
+      return report;
+    })
+    .catch((error) => {
+      providerState.error = String((error && error.message) || error);
+      ctx.logger?.warn?.('web-scout: provider init failed: ' + providerState.error);
+      return null;
+    });
+
   const api = createApi({
     store,
     defaults,
     clientGraph,
     cache,
+    providers: {
+      list: () => providerCatalog(),
+      reload: async () => initProviders(),
+      state: () => providerState,
+      platformCount: () => PLATFORMS.size,
+    },
     readMessages: (sessionId) => {
       const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : undefined;
       if (!sessions || typeof sessions.get !== 'function') return [];
@@ -295,6 +318,8 @@ export function apply(ctx, config = {}) {
       },
       execute: async (args, exec) => {
         const options = args && typeof args === 'object' ? args : {};
+        // provider 层还在加载时最多等 3 秒，避免首个搜索跑在没有外部 provider 的旧表上。
+        await Promise.race([startupProviders, new Promise((resolve) => setTimeout(resolve, 3000))]);
         const current = await settings();
         const hint = transcript(ctx, exec);
         const messages = hint.messages;

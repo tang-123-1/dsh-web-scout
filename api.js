@@ -120,7 +120,7 @@ function ttlFrom(settings) {
   return Math.min(CACHE_TTL_MAX, Math.max(CACHE_TTL_MIN, raw));
 }
 
-export function createApi({ store, defaults, readMessages, clientGraph, cache: injectedCache }) {
+export function createApi({ store, defaults, readMessages, clientGraph, cache: injectedCache, providers: providerBridge }) {
   const cache =
     injectedCache ||
     createCache({
@@ -286,6 +286,23 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
       }
       case 'clear': {
         return store.clearHistory();
+      }
+      case 'provider.list': {
+        const state = providerBridge && typeof providerBridge.state === 'function' ? providerBridge.state() : { report: null, error: '' };
+        return {
+          providers: providerBridge && typeof providerBridge.list === 'function' ? providerBridge.list() : [],
+          platforms: providerBridge && typeof providerBridge.platformCount === 'function' ? providerBridge.platformCount() : 0,
+          dir: state.report ? state.report.dir : '',
+          external: state.report ? state.report.external : [],
+          skipped: state.report ? state.report.skipped : true,
+          errors: state.report ? state.report.errors : [],
+          initError: state.error || '',
+        };
+      }
+      case 'provider.reload': {
+        if (!providerBridge || typeof providerBridge.reload !== 'function') throw new Error('provider 层没有启用');
+        const report = await providerBridge.reload();
+        return { ...report, providers: providerBridge.list(), platforms: providerBridge.platformCount() };
       }
       case 'cache.stats': {
         return cache.stats();

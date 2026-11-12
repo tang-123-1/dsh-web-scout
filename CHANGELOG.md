@@ -2,6 +2,27 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
+## 1.15.0 — 2026-11-13
+
+**为什么改**：路线图第 2 步。`engines.js` 已经长到 2100 行，加一个站点要改核心文件、还要小心别碰坏翻页/过滤/缓存；谁想接自己的站都得读完整份源码。后端必须能被「外挂」。
+
+### 新增
+- `providers/registry.js`：provider 契约 + 注册表。字段 `id/label/kind/list/site/browser/search`，带静态校验（id 格式、label 必填、search|browser 至少一个、kind 白名单、source 白名单）。
+- `providers/external.js`：从 `<profile>/web-scout-providers/*.mjs` 加载外部 provider。单文件上限 256 KB、最多 40 个，语法错误/校验失败/超时全部只记错误；每次 reload 带 `?v=<ts>` 真正重新 import。
+- `runSearch` 改为「先查 provider，再回落旧分支」：内置 provider 转调原后端，行为与 v1.14 等价（有断言）；外部 provider 直接进同一套过滤、去重、缓存、翻页流程。
+- 平台表可重建（`rebuildPlatformMap`）：外部 provider 自动进 `catalog.platforms`（`source:"external"`）、面板网格、`inferPlatforms` 所用平台集。
+- HTTP op `provider.list`（清单 + 目录 + 错误）与 `provider.reload`（热加载，不用重启 Host）。
+- `providers/example-provider.mjs`：最小可用示例（复制到 profile 目录即可试）。
+
+### 修
+- `platformCatalog()` 原来只遍历内置 `PLATFORM_LIST`，外部 provider 与自定义站点会漏出清单 → 改用 `PLATFORMS`。
+- 工具 `web_scout_search` 首次执行会等 provider 初始化（最多 3s），避免首个搜索跑在旧平台表上。
+
+### 验收
+- `_probe/verify-providers.mjs` 23 项全通过（校验 4 项、注册表 5 项、外部加载 4 项、集成 10 项，含「provider 与直接调后端结果一致」等价性断言与「坏文件不影响好文件」）。
+- `_probe/verify-providers-live.mjs` 12 项全通过：47 个 provider（46 内置 + 1 外部）、catalog 带 `source`、榜单标记仍在 8 个、外部 provider 可搜 3 条、内置 csdn/v2ex 正常、reload 幂等。
+- `_probe/verify-providers-robust.mjs` 6 项全通过：现场塞入「坏 id」与「语法错误」两个文件，reload 报错但不掉平台、搜索照常，清理后错误归零。
+
 ## 1.14.0 — 2026-11-13
 
 **为什么改**：路线图第 1 步。搜索一次要 1 秒左右、读一篇正文要 1 秒，而同一个词/同一个链接在几分钟内经常被重复请求（面板手滑再点一次、工具重跑、对话里反复引用同一篇）。这部分延迟和上游限额都是白花的。
