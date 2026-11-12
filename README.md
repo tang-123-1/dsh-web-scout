@@ -1,7 +1,7 @@
 # web-scout · DeepSeek Harness 联网检索插件
 
-> 按对话内容自动联网检索，41 个平台后端，站内搜索、登录态复用、可拖动缩放的结果面板。
-> A conversation-aware web search plugin for [DeepSeek Harness](https://github.com/deepseek-ai) (Cordis bundle). 41 platform backends, native in-site search, cookie-based login reuse, a draggable/resizable result panel.
+> 按对话内容自动联网检索，46 个平台后端，站内搜索、登录态复用、可拖动缩放的结果面板。
+> A conversation-aware web search plugin for [DeepSeek Harness](https://github.com/deepseek-ai) (Cordis bundle). 46 platform backends, native in-site search, cookie-based login reuse, a draggable/resizable result panel.
 
 ![许可证](https://img.shields.io/badge/license-MIT-blue.svg)
 ![版本](https://img.shields.io/badge/version-1.6.0-informational.svg)
@@ -35,9 +35,13 @@
 | --- | --- |
 | ![登录](docs/panel-login.png) | ![热榜](docs/panel-hot.png) |
 
+| 五个热搜榜单（微博 / B站 / 知乎 / 百度 / 头条，v1.8） | |
+| --- | --- |
+| ![热搜榜单](docs/panel-hot-lists.png) | |
+
 ## 功能
 
-- **41 个平台**：4 类后端——直连接口（JSON/HTML 解析）、`site:` 站内检索（必应 + 360 双引擎，带域名校验）、榜单/信息流（抖音热榜、知乎推荐、知乎关注，不需要关键词）、自定义站点。
+- **46 个平台**：4 类后端——直连接口（JSON/HTML 解析）、`site:` 站内检索（必应 + 360 双引擎，带域名校验）、榜单/信息流（抖音热榜、微博热搜、B站热门、知乎热榜、百度热搜、头条热榜、知乎推荐、知乎关注，共 8 个，不需要关键词）、自定义站点。
 - **多页抓取**：`limit`（每源条数，≤30）× `pages`（每源页数，≤4）× `maxPlatforms`（同时跑几个源，≤14）。默认 `12 × 3 × 10`，实测「龙珠」一次 70–90 条，`20 × 4` 可到 103–121 条。
 - **相关性过滤**：标题和摘要都不含关键词的结果直接丢掉（修掉 B 站搜「龙珠」返回「赵云-飞龙神将」这类“猜词”噪音），过滤后为空会走一次 `site:` 兜底。
 - **落地页过滤**：站点类平台不再把首页/频道页（`/`、`/hot`、`/search`、`/topic`）当结果返回。
@@ -92,7 +96,7 @@ POST http://127.0.0.1:3209/web-scout/api
 {"op":"catalog"}
 ```
 
-返回 `{"ok":true,...}` 且 `platforms` 长度为 41、`chips` 为 8 个默认芯片，就说明 Host 和客户端都已就绪。
+返回 `{"ok":true,...}` 且 `platforms` 长度为 46、`chips` 为 8 个默认芯片，就说明 Host 和客户端都已就绪。
 
 离线验证（不启动 DSH，直接跑引擎）：
 
@@ -153,6 +157,11 @@ node scripts/smoke.mjs "cordis 插件"
 | V2EX | `v2ex` | `from` | `sov2ex` 接口 |
 | 微信 | `weixin` | `page` | 搜狗微信，抓公众号文章标题/摘要/账号 |
 | 抖音热榜 | `douyin-hot` | ✗ | 榜单，不需要关键词，50 条 |
+| 微博热搜 | `weibo-hot` | ✗ | `weibo.com/ajax/side/hotSearch`，50 条，带热度与「热/新/沸」标签 |
+| B站热门 | `bili-hot` | ✗ | `ranking/v2` 排行榜，100 条，带播放/点赞/UP 主 |
+| 知乎热榜 | `zhihu-hot` | ✗ | `/api/v3/feed/topstory/hot-lists/total`，30 条，**需要登录** |
+| 百度热搜 | `baidu-hot` | ✗ | `top.baidu.com/api/board`，实时榜 |
+| 头条热榜 | `toutiao-hot` | ✗ | `hot-event/hot-board`，50 条，带热度与榜单位次 |
 | 知乎推荐 | `zhihu-recommend` | `page_number` | **需要登录**；首页推荐流，6 条/页 |
 | 知乎关注 | `zhihu-follow` | `page_number` | **需要登录**；关注流，6 条/页 |
 | GitHub / Stack Overflow / npm / Hacker News / 维基百科 | 各自接口 | `page` | Stack Overflow 与维基需要代理 |
@@ -161,13 +170,23 @@ node scripts/smoke.mjs "cordis 插件"
 
 > 加新平台的成本：能直连就在 `engines.js` 的 `BACKENDS` 里加一个 `async (ctx) => rows`，再在 `PLATFORM_LIST` 里挂 `backend`；不能直连就在 `PLATFORM_LIST` 里给个 `site` + `browser(q)`，其余全部自动生效（翻页、去重、过滤、状态药丸都不用管）。
 
-### 信息流平台（v1.7）
+### 榜单与信息流（v1.7 / v1.8）
 
-「抖音热榜」「知乎推荐」「知乎关注」不消费关键词——选中它们、输入框留空直接搜，拿到的就是当前榜单/信息流。
+八个平台不消费关键词——选中它们、输入框留空直接搜，拿到的就是当前榜单/信息流。面板检测到「选中项全是这类平台」时，输入框提示会变成「榜单/信息流：不用输关键词，直接点搜索」。
+
+| 平台 | 后端 | 需要登录 | 条数 | 带什么 |
+| --- | --- | --- | --- | --- |
+| 抖音热榜 | `douyin-hot` | ✗ | 50 | 排名、热度、标签位 |
+| 微博热搜 | `weibo-hot` | ✗ | 50 | 排名、热度、热/新/沸 |
+| B站热门 | `bili-hot` | ✗ | 100 | 排名、播放、点赞、UP 主 |
+| 知乎热榜 | `zhihu-hot` | **是** | 30 | 排名、回答数、关注数 |
+| 百度热搜 | `baidu-hot` | ✗ | 实时榜 | 排名、词条链接 |
+| 头条热榜 | `toutiao-hot` | ✗ | 50 | 排名、热度、榜单位次 |
+| 知乎推荐 / 知乎关注 | `zhihu-recommend` / `zhihu-follow` | **是** | 6/页 | 作者、赞数、评论、日期 |
 
 - 抖音热榜：`iesdouyin` 榜单接口，50 条，带排名/热度/标签位。
 - 知乎推荐 / 知乎关注：`/api/v3/feed/topstory*`，6 条/页，`pages` 控制翻几页。**必须先登录知乎**，否则状态药丸会显示「需要登录：还没登录知乎…」。
-- 这三个平台不在默认 9 源里（混进关键词检索会全是噪音），需要时在「站点」分区里点一下加到芯片条。
+- 这八个平台不在默认 9 源里（混进关键词检索会全是噪音），需要时在「站点」分区里点一下加到芯片条；榜单是实时抓取，刷新面板就是最新榜。
 - 只选信息流平台时，插件不会把对话内容硬塞成查询词（`feedOnly` 分支），API 用 `{"op":"search","platforms":["zhihufollow"]}` 即可。
 
 ## 登录状态
@@ -237,7 +256,7 @@ Cookie 存在 `~/.dsh/web-scout.json` 的 `cookies` 字段里，**不要提交�
 web-scout/
 ├── index.js          Host 入口：注册 3 个工具 + systemPrompt + /web-scout/api 路由 + 客户端自愈
 ├── api.js            接口分发（catalog/search/read/open/config/chips/platform.*/login.*/browser.*/graph）
-├── engines.js        41 个平台定义 + 各站后端 + 翻页/去重/相关性过滤/站内兜底
+├── engines.js        46 个平台定义 + 各站后端 + 翻页/去重/相关性过滤/站内兜底
 ├── net.js            零依赖 HTTP 客户端（手动重定向、gzip/br/zstd、GBK、CONNECT 隧道、CookieJar）
 ├── store.js          配置持久化（原子写、防抖、版本迁移）
 ├── login.js          登录探针与判定（require 白名单）
@@ -270,7 +289,7 @@ curl -s -X POST http://127.0.0.1:3209/web-scout/api \
 cd D:/dshcs/web-scout
 git init
 git add .
-git commit -m "feat: web-scout 1.7.0 — 41 平台联网检索插件"
+git commit -m "feat: web-scout 1.8.0 — 46 平台联网检索插件"
 git branch -M main
 git remote add origin https://github.com/[GITHUB_OWNER]/web-scout.git
 git push -u origin main

@@ -2,6 +2,27 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
+## 1.8.0 — 2026-11-12
+
+### 新增
+- **五个热搜/榜单平台**（都是 `list: true`，不需要关键词）：
+  | 平台 | 后端 | 数据源 | 条数 |
+  | --- | --- | --- | --- |
+  | 微博热搜 | `weibo-hot` | `weibo.com/ajax/side/hotSearch` | 50（带热度、热/新/沸标签） |
+  | B站热门 | `bili-hot` | `api.bilibili.com/x/web-interface/ranking/v2` | 100（带播放/点赞/UP 主） |
+  | 知乎热榜 | `zhihu-hot` | `/api/v3/feed/topstory/hot-lists/total` | 30（需要 `z_c0`） |
+  | 百度热搜 | `baidu-hot` | `top.baidu.com/api/board` | 实时榜（嵌套 `cards[].content[].content`） |
+  | 头条热榜 | `toutiao-hot` | `toutiao.com/hot-event/hot-board` | 50（带热水位与榜单序号） |
+- 平台总数 41 → **46**；知乎热榜复用知乎登录态（`needsLogin: 'zhihu'`），未登录时状态药丸显示「需要登录：还没登录知乎…」。
+- 面板提示：`platformCatalog()` 新增 `list` 标记，客户端据此判断「选中项全是榜单/信息流」，把输入框提示改成「榜单/信息流：不用输关键词，直接点搜索」，并在结果区上方补一行同样说明。
+
+### 修复
+- 平台推断：`inferPlatforms()` 增加「具体压过泛化」规则（`HINT_GENERIC`）——「微博热搜」只返回 `weibohot`，不再同时触发 `weibo`；同理 知乎热榜/推荐/关注 不再叠加 `zhihu`，B站热门不再叠加 `bilibili`。
+
+### 工程
+- README 的平台表、信息流小节、平台计数、安装校验示例全部同步；新增「榜单与信息流」对照表。
+- 离线验证脚本：`_probe/t89.mjs`（五个榜单一次跑完）、`_probe/t90.mjs`（知乎热榜带 cookie）。
+
 ## 1.7.0 — 2026-11-12
 
 ### 新增

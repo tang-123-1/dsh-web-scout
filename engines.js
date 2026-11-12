@@ -121,6 +121,11 @@ export const PLATFORM_LIST = [
   { id: 'bilibili', zh: '哔哩哔哩', en: 'Bilibili', group: 'video', backend: 'bilibili', site: 'bilibili.com', browser: (q) => `https://search.bilibili.com/all?keyword=${enc(q)}` },
   { id: 'douyin', zh: '抖音', en: 'Douyin', group: 'video', site: 'douyin.com', browser: (q) => `https://www.douyin.com/search/${enc(q)}` },
   { id: 'douyinhot', zh: '抖音热榜', en: 'Douyin Hot', group: 'video', backend: 'douyin-hot', list: true, browser: () => 'https://www.douyin.com/hot' },
+  { id: 'weibohot', zh: '微博热搜', en: 'Weibo Hot', group: 'social', backend: 'weibo-hot', list: true, browser: () => 'https://s.weibo.com/top/summary' },
+  { id: 'bilihot', zh: 'B站热门', en: 'Bilibili Popular', group: 'video', backend: 'bili-hot', list: true, browser: () => 'https://www.bilibili.com/v/popular/rank/all' },
+  { id: 'zhihuhot', zh: '知乎热榜', en: 'Zhihu Hot', group: 'social', backend: 'zhihu-hot', list: true, needsLogin: 'zhihu', browser: () => 'https://www.zhihu.com/hot' },
+  { id: 'baiduhot', zh: '百度热搜', en: 'Baidu Hot', group: 'general', backend: 'baidu-hot', list: true, browser: () => 'https://top.baidu.com/board?tab=realtime' },
+  { id: 'toutiaohot', zh: '头条热榜', en: 'Toutiao Hot', group: 'general', backend: 'toutiao-hot', list: true, browser: () => 'https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc' },
   { id: 'youtube', zh: 'YouTube', en: 'YouTube', group: 'video', site: 'youtube.com', browser: (q) => `https://www.youtube.com/results?search_query=${enc(q)}`, needsTunnel: true },
   { id: 'xiaohongshu', zh: '小红书', en: 'Xiaohongshu', group: 'social', site: 'xiaohongshu.com', browser: (q) => `https://www.xiaohongshu.com/search_result?keyword=${enc(q)}` },
   { id: 'weibo', zh: '微博', en: 'Weibo', group: 'social', site: 'weibo.com', browser: (q) => `https://s.weibo.com/weibo?q=${enc(q)}` },
@@ -346,7 +351,14 @@ const ALIASES = new Map([
   ['bilibili', 'bilibili'],
   ['抖音', 'douyin'],
   ['小红书', 'xiaohongshu'],
+  ['微博热搜', 'weibohot'],
   ['微博', 'weibo'],
+  ['b站热门', 'bilihot'],
+  ['b站排行榜', 'bilihot'],
+  ['知乎热榜', 'zhihuhot'],
+  ['百度热搜', 'baiduhot'],
+  ['头条热榜', 'toutiaohot'],
+  ['抖音热榜', 'douyinhot'],
   ['头条', 'toutiao'],
   ['今日头条', 'toutiao'],
   ['微信', 'weixin'],
@@ -394,6 +406,7 @@ export function platformCatalog() {
     domain: cookieDomainFor(item.id),
     login: loginUrlFor(item.id) || (item.needsLogin ? loginUrlFor(item.needsLogin) : ''),
     custom: item.custom === true,
+    list: item.list === true,
   }));
 }
 
@@ -411,6 +424,12 @@ const PLATFORM_HINTS = [
   [/淘宝|天猫/i, 'taobao'],
   [/京东/i, 'jd'],
   [/闲鱼/i, 'xianyu'],
+  [/微博热搜/i, 'weibohot'],
+  [/b\s*站热门|b站排行/i, 'bilihot'],
+  [/知乎热榜/i, 'zhihuhot'],
+  [/百度热搜/i, 'baiduhot'],
+  [/头条热榜/i, 'toutiaohot'],
+  [/抖音热榜/i, 'douyinhot'],
   [/微博/i, 'weibo'],
   [/微信|公众号|weixin|wechat/i, 'weixin'],
   [/掘金/i, 'juejin'],
@@ -440,11 +459,25 @@ const PLATFORM_HINTS = [
   [/medium/i, 'medium'],
 ];
 
+const HINT_GENERIC = {
+  weibohot: ['weibo'],
+  bilihot: ['bilibili'],
+  zhihuhot: ['zhihu'],
+  baiduhot: ['baidu'],
+  toutiaohot: ['toutiao'],
+  douyinhot: ['douyin'],
+  zhihurec: ['zhihu'],
+  zhihufollow: ['zhihu'],
+};
+
 export function inferPlatforms(text) {
   const found = new Set();
   const value = String(text || '');
   for (const [pattern, id] of PLATFORM_HINTS) {
     if (pattern.test(value)) found.add(id);
+  }
+  for (const id of [...found]) {
+    for (const generic of HINT_GENERIC[id] || []) found.delete(generic);
   }
   return [...found];
 }
@@ -866,6 +899,134 @@ backends['douyin-hot'] = async (ctx) => {
       url: `https://www.douyin.com/search/${encodeURIComponent(word)}`,
       snippet: `热榜第 ${index + 1} 名 · 热度 ${hotText}${tag ? ` · ${tag}` : ''}${activeTime ? ` · 更新 ${activeTime}` : ''}`,
       extra: { rank: index + 1, hot, label: tag, activeTime },
+    };
+  });
+};
+
+// ---- 榜单/热搜：微博、B站、知乎、百度、头条（v1.8）----
+// 这些是「不需要关键词」的信息流，平台定义带 list: true，只在用户点选时出现。
+
+const HOT_MIN_ROWS = 12;
+const HOT_MAX_ROWS = 50;
+
+function hotCount(value) {
+  const number = Number(value) || 0;
+  if (number >= 100000000) return `${(number / 100000000).toFixed(1)}亿`;
+  if (number >= 10000) return `${(number / 10000).toFixed(number >= 100000 ? 0 : 1)}w`;
+  return String(number);
+}
+
+function hotTaken(limit) {
+  return Math.max(HOT_MIN_ROWS, Math.min(HOT_MAX_ROWS, Number(limit) || HOT_MIN_ROWS));
+}
+
+function zhihuQuestionUrl(id, url) {
+  const value = String(url || '');
+  const match = /\/questions\/(\d+)/.exec(value);
+  const qid = match ? match[1] : String(id || '');
+  return qid === '' ? '' : `https://www.zhihu.com/question/${qid}`;
+}
+
+backends['weibo-hot'] = async ({ client, limit, timeoutMs }) => {
+  const body = (await client.json('https://weibo.com/ajax/side/hotSearch', { headers: { referer: 'https://weibo.com/' }, timeoutMs })).data;
+  const list = body && body.data && Array.isArray(body.data.realtime) ? body.data.realtime : [];
+  if (list.length === 0) throw new EngineBlocked('weibo hot list is empty', 'https://s.weibo.com/top/summary');
+  return list.filter((row) => row && row.word).slice(0, hotTaken(limit)).map((row, index) => {
+    const rank = Number(row.realpos) || index + 1;
+    const tag = String(row.label_name || row.icon_desc || '');
+    return {
+      title: String(row.word),
+      url: `https://s.weibo.com/weibo?q=${encodeURIComponent(row.word_scheme || `#${row.word}#`)}`,
+      snippet: `热搜第 ${rank} 名 · 热度 ${hotCount(row.num)}${tag ? ` · ${tag}` : ''}`,
+      source: '微博热搜',
+      extra: { rank, hot: Number(row.num) || 0, label: tag },
+    };
+  });
+};
+
+backends['bili-hot'] = async ({ client, limit, timeoutMs }) => {
+  const body = (await client.json('https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all', { headers: { referer: 'https://www.bilibili.com/' }, timeoutMs })).data;
+  const list = body && body.data && Array.isArray(body.data.list) ? body.data.list : [];
+  if (list.length === 0) throw new EngineBlocked('bilibili ranking is empty', 'https://www.bilibili.com/v/popular/rank/all');
+  return list.slice(0, hotTaken(limit)).map((row, index) => {
+    const stat = (row && row.stat) || {};
+    const bvid = String((row && row.bvid) || `av${(row && row.aid) || ''}`);
+    const author = (row && row.owner && row.owner.name) || '';
+    return {
+      title: String((row && row.title) || ''),
+      url: `https://www.bilibili.com/video/${bvid}`,
+      snippet: `热门第 ${index + 1} 名 · ${hotCount(stat.view)} 播放 · ${hotCount(stat.like)} 赞${author ? ` · @${author}` : ''}`,
+      source: 'B站热门',
+      extra: { rank: index + 1, view: Number(stat.view) || 0, like: Number(stat.like) || 0, author },
+    };
+  });
+};
+
+backends['zhihu-hot'] = async ({ client, limit, timeoutMs }) => {
+  const cookie = client.jar.header('www.zhihu.com') || '';
+  if (!/(^|;\s*)z_c0=/.test(cookie)) {
+    const error = new Error('还没登录知乎：在面板「登录与账号 → 插件浏览器」里登录一次，再点「读取登录」');
+    error.login = true;
+    error.blocked = true;
+    throw error;
+  }
+  const body = (await client.json('https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total?limit=50&desktop=true', { headers: { referer: 'https://www.zhihu.com/hot' }, timeoutMs })).data;
+  const list = body && Array.isArray(body.data) ? body.data : [];
+  if (list.length === 0) throw new EngineBlocked('zhihu hot list is empty', 'https://www.zhihu.com/hot');
+  const rows = [];
+  for (const item of list) {
+    const target = (item && item.target) || {};
+    const url = zhihuQuestionUrl(target.id, target.url);
+    if (!url) continue;
+    rows.push({
+      title: String(target.title || ''),
+      url,
+      snippet: `热榜第 ${rows.length + 1} 名 · ${hotCount(target.answer_count)} 回答 · ${hotCount(target.follower_count)} 关注`,
+      source: '知乎热榜',
+      extra: { rank: rows.length + 1, answers: target.answer_count, followers: target.follower_count, detail: item.detail_text },
+    });
+    if (rows.length >= hotTaken(limit)) break;
+  }
+  if (rows.length === 0) throw new EngineBlocked('zhihu hot list has no questions', 'https://www.zhihu.com/hot');
+  return rows;
+};
+
+backends['baidu-hot'] = async ({ client, limit, timeoutMs }) => {
+  const body = (await client.json('https://top.baidu.com/api/board?platform=wise&tab=realtime', { headers: { referer: 'https://top.baidu.com/board?tab=realtime' }, timeoutMs })).data;
+  const cards = (body && body.data && Array.isArray(body.data.cards) && body.data.cards) || [];
+  const rows = [];
+  for (const card of cards) {
+    for (const block of (card && card.content) || []) {
+      const items = Array.isArray(block.content) ? block.content : block.word ? [block] : [];
+      for (const item of items) {
+        if (!item || !item.word) continue;
+        rows.push({
+          title: String(item.word),
+          url: String(item.url || `https://www.baidu.com/s?wd=${encodeURIComponent(item.word)}`),
+          snippet: `热搜第 ${rows.length + 1} 名${item.desc ? ` · ${String(item.desc).slice(0, 60)}` : ''}`,
+          source: '百度热搜',
+          extra: { rank: rows.length + 1, desc: item.desc || '', hot: item.hotScore || '' },
+        });
+        if (rows.length >= hotTaken(limit)) return rows;
+      }
+    }
+  }
+  if (rows.length === 0) throw new EngineBlocked('baidu board is empty', 'https://top.baidu.com/board?tab=realtime');
+  return rows;
+};
+
+backends['toutiao-hot'] = async ({ client, limit, timeoutMs }) => {
+  const body = (await client.json('https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc', { headers: { referer: 'https://www.toutiao.com/' }, timeoutMs })).data;
+  const list = body && Array.isArray(body.data) ? body.data : [];
+  if (list.length === 0) throw new EngineBlocked('toutiao hot board is empty', 'https://www.toutiao.com/hot-event/hot-board/');
+  return list.filter((row) => row && row.Title).slice(0, hotTaken(limit)).map((row, index) => {
+    const tag = String(row.LabelDesc || row.Label || '');
+    return {
+      title: String(row.Title),
+      url: String(row.Url || `https://so.toutiao.com/search?keyword=${encodeURIComponent(row.Title)}`),
+      snippet: `热榜第 ${index + 1} 名 · 热度 ${hotCount(row.HotValue)}${tag ? ` · ${tag}` : ''}`,
+      source: '头条热榜',
+      extra: { rank: index + 1, hot: Number(row.HotValue) || 0, label: tag },
     };
   });
 };

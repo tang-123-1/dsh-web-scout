@@ -1,6 +1,6 @@
 {
   "name": "@local/web-scout",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "private": true,
   "type": "module",
   "description": "对话感知的联网检索插件：39 个平台后端、站内搜索、插件自管浏览器登录、可拖动缩放的结果面板。",

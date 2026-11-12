@@ -15,6 +15,7 @@ window.__ModuleLoader__.load({
         title: '联网检索',
         auto: '自动',
         placeholder: '输入关键词后回车；留空＝按当前对话内容检索',
+        feedHint: '榜单/信息流：不用输关键词，直接点搜索',
         search: '搜索',
         searching: '检索中…',
         close: '关闭',
@@ -66,6 +67,7 @@ window.__ModuleLoader__.load({
         title: 'Web scout',
         auto: 'Auto',
         placeholder: 'Type a query, Enter to run (empty = this conversation)',
+        feedHint: 'Hot list: no keywords needed — just hit search',
         search: 'Search',
         searching: 'Searching…',
         close: 'Close',
@@ -624,6 +626,9 @@ window.__ModuleLoader__.load({
         if (value.config) setProxy(value.config.proxy || '');
       };
 
+      const listIds = React.useMemo(() => new Set(catalog.filter((item) => item.list === true).map((item) => item.id)), [catalog]);
+      const feedOnly = selected.length > 0 && selected.every((id) => listIds.has(id));
+
       React.useEffect(() => {
         let alive = true;
         post('catalog')
@@ -930,7 +935,7 @@ window.__ModuleLoader__.load({
               h('input', {
                 ref: inputRef,
                 value: query,
-                placeholder: t('placeholder'),
+                placeholder: feedOnly ? t('feedHint') : t('placeholder'),
                 style: S.input,
                 onChange: (event) => setQuery(event.target.value),
                 onKeyDown: (event) => {
@@ -1181,6 +1186,7 @@ window.__ModuleLoader__.load({
                 : null,
               !data && !error ? h('div', { style: S.hint }, t('empty')) : null,
               data && data.query && data.query.length > 40 ? h('div', { style: S.hint }, t('longHint')) : null,
+              feedOnly ? h('div', { style: S.hint }, t('feedHint')) : null,
               data && rows.length === 0 ? h('div', { style: S.hint }, t('empty')) : null,
               rows.map((item) =>
                 h(
