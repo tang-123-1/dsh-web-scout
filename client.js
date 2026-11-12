@@ -55,6 +55,10 @@ window.__ModuleLoader__.load({
   viewCompact: '紧凑',
   onlyHint: '只看这一个平台（再点药丸取消）',
   clearOnly: '全部平台',
+  rankOf: '第 {k} 个 / 共 {m} 个',
+  likes: '{n} 赞',
+  videos: '共 {n} 个视频',
+  byAuthor: '@{name}',
         siteUrl: '搜索地址，用 {q} 占位',
         siteDomain: '限定域名，如 douyin.com',
         add: '添加',
@@ -125,6 +129,10 @@ window.__ModuleLoader__.load({
   viewCompact: 'Compact',
   onlyHint: 'Only this platform (click the pill again to clear)',
   clearOnly: 'All platforms',
+  rankOf: '#{k} of {m}',
+  likes: '{n} likes',
+  videos: '{n} videos',
+  byAuthor: '@{name}',
         siteUrl: 'Search URL with {q}',
         siteDomain: 'Restrict to domain, e.g. douyin.com',
         add: 'Add',
@@ -418,6 +426,8 @@ window.__ModuleLoader__.load({
         whiteSpace: 'nowrap',
         marginTop: '2px',
       },
+      authorRow: { fontSize: '11px', color: C.dim, marginTop: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      authorLink: { color: C.dim, textDecoration: 'none' },
       itemSnip: {
         color: C.dim,
         marginTop: '4px',
@@ -591,6 +601,26 @@ const KIND_GLYPH = {
 
 function kindLabel(t, key) {
   return typeof t === 'function' ? t(key) : String(key || '');
+}
+
+function fill(template, values) {
+  return String(template || '').replace(/\{(\w+)\}/g, (_all, key) => (values[key] === undefined ? '' : String(values[key])));
+}
+
+/** 作者 + 「第 k 个 / 共 m 个」这段小字，视频与 B 站结果才有。 */
+function authorText(t, extra) {
+  const data = extra || {};
+  const parts = [];
+  if (data.author) parts.push(fill(t('byAuthor'), { name: data.author }));
+  if (data.rank && data.authorTotal) parts.push(fill(t('rankOf'), { k: data.rank, m: data.authorTotal }));
+  else if (data.authorTotal) parts.push(fill(t('videos'), { n: data.authorTotal }));
+  if (data.digg) parts.push(fill(t('likes'), { n: Number(data.digg).toLocaleString() }));
+  if (!parts.length) return '';
+  if (data.createTime) {
+    const when = new Date(Number(data.createTime) * 1000);
+    if (!Number.isNaN(when.getTime())) parts.push(`${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`);
+  }
+  return parts.join(' · ');
 }
 
 function kindText(t, kind) {
@@ -1458,7 +1488,17 @@ function statusStyle(status) {
                             shown ? '‖' : '▶',
                           )
                         : null,
-                      h('span', { style: S.compactMeta }, item.platformLabel || item.platform),
+                      h(
+                        'span',
+                        { style: S.compactMeta },
+                        (item.platformLabel || item.platform) +
+                          (item.extra && item.extra.author ? ` · @${item.extra.author}` : '') +
+                          (item.extra && item.extra.rank && item.extra.authorTotal
+                            ? ` · ${fill(t('rankOf'), { k: item.extra.rank, m: item.extra.authorTotal })}`
+                            : item.extra && item.extra.authorTotal
+                              ? ` · ${fill(t('videos'), { n: item.extra.authorTotal })}`
+                              : ''),
+                      ),
                       h('button', { type: 'button', style: S.viewBtn, onClick: () => openUrl(item.url) }, t('open')),
                     ),
                     shown
@@ -1538,6 +1578,26 @@ function statusStyle(status) {
                         h('span', { style: S.kindTag }, kindText(t, kind)),
                         item.url,
                       ),
+                      item.extra && authorText(t, item.extra)
+                        ? h(
+                            'div',
+                            { style: S.authorRow },
+                            item.extra.authorUrl
+                              ? h(
+                                  'a',
+                                  {
+                                    href: item.extra.authorUrl,
+                                    style: S.authorLink,
+                                    onClick: (event) => {
+                                      event.preventDefault();
+                                      openUrl(item.extra.authorUrl);
+                                    },
+                                  },
+                                  authorText(t, item.extra),
+                                )
+                              : h('span', null, authorText(t, item.extra)),
+                          )
+                        : null,
                       item.snippet ? h('div', { style: S.itemSnip }, item.snippet) : null,
                     ),
                     h(

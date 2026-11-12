@@ -2,6 +2,15 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
+## 1.11.0
+
+- 视频类结果带作者与序号：`@作者`（可点进主页）、`第 k 个 / 共 M 个`、点赞数、发布日期；紧凑视图合并成一行。
+- B 站：`x/space/navnum` 取作品总数，`x/space/wbi/arc/search?order=pubdate` 倒序分页二分定位，得出「第几个」；每次搜索只给第一条算序号（3 秒预算、最多 6 次翻页）。
+- B 站空间接口按 IP 风控（`-412 / -352 / -799`）：命中后 10 分钟降级为「共 M 个视频」，不影响搜索本身。
+- 修 `bilibiliKey` 少读一层 `.data`（wbi 签名一直拿不到密钥，导致 B 站后端长期走 `site:` 兜底、没有封面和播放）。
+- 抖音：结果链接从 `www.douyin.com/video/<id>` 换成免验证码的 `iesdouyin.com/share/video/<id>/`（PC 端 `/discover`、`/hot`、`/video` 全是验证码页或 302 到「精选」）；分享页服务端不再返回 `videoInfoRes`，所以抖音行不保证有作者/点赞。
+- `client.js`：`fill()`、`authorText()`、`S.authorRow`/`S.authorLink`；主题色改回 `C.dim`（`C.textDim` 不存在）。
+
 ## 1.10.0 — 2026-11-12
 
 ### 新增

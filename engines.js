@@ -199,7 +199,8 @@ export const PLATFORM_LIST = [
   { id: 'oschina', zh: '开源中国', en: 'OSChina', group: 'cn', site: 'oschina.net', browser: (q) => `https://www.oschina.net/search?scope=all&q=${enc(q)}` },
   { id: 'gitee', zh: 'Gitee', en: 'Gitee', group: 'cn', site: 'gitee.com', browser: (q) => `https://search.gitee.com/?skin=rec&type=repository&q=${enc(q)}` },
   { id: 'bilibili', zh: '哔哩哔哩', en: 'Bilibili', group: 'video', backend: 'bilibili', site: 'bilibili.com', browser: (q) => `https://search.bilibili.com/all?keyword=${enc(q)}` },
-  { id: 'douyin', zh: '抖音', en: 'Douyin', group: 'video', site: 'douyin.com', browser: (q) => `https://www.douyin.com/search/${enc(q)}` },
+  // 抖音 PC 端首页现在统一跳「精选」，站内搜索请走 search 页（带 type=video，不会落回精选首页）。
+  { id: 'douyin', zh: '抖音', en: 'Douyin', group: 'video', site: 'douyin.com', browser: (q) => `https://www.douyin.com/search/${enc(q)}?type=video&source=normal_search` },
   { id: 'douyinhot', zh: '抖音热榜', en: 'Douyin Hot', group: 'video', backend: 'douyin-hot', list: true, browser: () => 'https://www.douyin.com/hot' },
   { id: 'weibohot', zh: '微博热搜', en: 'Weibo Hot', group: 'social', backend: 'weibo-hot', list: true, browser: () => 'https://s.weibo.com/top/summary' },
   { id: 'bilihot', zh: 'B站热门', en: 'Bilibili Popular', group: 'video', backend: 'bili-hot', list: true, browser: () => 'https://www.bilibili.com/v/popular/rank/all' },
@@ -1375,18 +1376,236 @@ function md5(value) {
 async function bilibiliKey(client, timeoutMs) {
   if (wbiCache.key !== '' && Date.now() - wbiCache.at < 10 * 60 * 1000) return wbiCache.key;
   const spi = await client.json('https://api.bilibili.com/x/frontend/finger/spi', { timeoutMs });
+  // client.json() 已经把响应体放进 .data，接口自己的载荷在 .data.data 里。
+  const spiData = (spi.data && spi.data.data) || {};
   const cookieParts = [];
-  if (spi.data && typeof spi.data.b_3 === 'string' && spi.data.b_3 !== '') cookieParts.push(`buvid3=${spi.data.b_3}`);
-  if (spi.data && typeof spi.data.b_4 === 'string' && spi.data.b_4 !== '') cookieParts.push(`buvid4=${spi.data.b_4}`);
+  if (typeof spiData.b_3 === 'string' && spiData.b_3 !== '') cookieParts.push(`buvid3=${spiData.b_3}`);
+  if (typeof spiData.b_4 === 'string' && spiData.b_4 !== '') cookieParts.push(`buvid4=${spiData.b_4}`);
   if (cookieParts.length > 0) client.jar.store.set('bilibili.com', cookieParts.join('; '));
   const nav = await client.json('https://api.bilibili.com/x/web-interface/nav', { timeoutMs });
-  const img = (nav.data && nav.data.wbi_img) || {};
+  const navBody = (nav.data && nav.data.data) || nav.data || {};
+  const img = navBody.wbi_img || {};
   const pick = (url) => String(url || '').split('/').pop().split('.')[0];
   const raw = `${pick(img.img_url)}${pick(img.sub_url)}`;
   if (raw.length < 32) return '';
   const key = MIXIN_TAB.map((index) => raw[index] || '').join('').slice(0, 32);
   wbiCache = { at: Date.now(), key };
   return key;
+}
+
+// ---------------------------------------------------------------------------
+// 视频站点增强（v1.11）：作者名 + 他在作者作品里的序号
+// ---------------------------------------------------------------------------
+const authorTotalCache = new Map();
+const spacePageCache = new Map();
+// B 站空间接口按 IP 风控：连打几页就 -412/-799。命中过一次就静默一段时间，
+// 免得每个搜索都去撞墙，把风控越撞越久。
+let spaceBanUntil = 0;
+
+const SPACE_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const SPACE_BAN_MS = 10 * 60 * 1000;
+
+async function biliSpacePage(client, mid, page, timeoutMs) {
+  const cacheKey = `${mid}:${page}`;
+  const hit = spacePageCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.rows;
+  if (Date.now() < spaceBanUntil) return [];
+  const headers = { referer: `https://space.bilibili.com/${mid}/video`, origin: 'https://space.bilibili.com', 'user-agent': SPACE_UA };
+  // 老接口不需要签名，先用它；不行再退回 wbi 签名接口。
+  const legacy = await client
+    .json(`https://api.bilibili.com/x/space/arc/search?mid=${enc(String(mid))}&ps=20&pn=${enc(String(page))}&order=pubdate`, { headers, timeoutMs })
+    .catch(() => null);
+  const readRows = (body) => (body && body.code === 0 && body.data && body.data.list ? body.data.list.vlist || [] : []);
+  let rows = readRows(legacy && legacy.data);
+  if (rows.length > 0) {
+    spacePageCache.set(cacheKey, { at: Date.now(), rows });
+    return rows;
+  }
+  const legacyCode = legacy && legacy.data ? Number(legacy.data.code) : 0;
+  if (legacyCode === -412 || legacyCode === -799 || legacyCode === -352) {
+    spaceBanUntil = Date.now() + SPACE_BAN_MS;
+    return [];
+  }
+  const mixin = await bilibiliKey(client, timeoutMs);
+  const params = { mid: String(mid), ps: '20', pn: String(page), order: 'pubdate', platform: 'web', web_location: '1550101' };
+  if (mixin !== '') {
+    const wts = String(Math.floor(Date.now() / 1000));
+    const sorted = Object.keys(params)
+      .sort()
+      .map((key) => `${enc(key)}=${enc(String(params[key]).replace(/[!'()*]/g, ''))}`)
+      .join('&');
+    params.wts = wts;
+    params.w_rid = md5(`${sorted}&wts=${wts}${mixin}`);
+  }
+  const search = Object.keys(params).map((key) => `${enc(key)}=${enc(String(params[key]))}`).join('&');
+  const { data } = await client.json(`https://api.bilibili.com/x/space/wbi/arc/search?${search}`, { headers, timeoutMs });
+  rows = readRows(data);
+  const code = data ? Number(data.code) : 0;
+  if (code === -412 || code === -799 || code === -352) spaceBanUntil = Date.now() + SPACE_BAN_MS;
+  if (rows.length > 0) spacePageCache.set(cacheKey, { at: Date.now(), rows });
+  return rows;
+}
+
+async function biliAuthorTotal(client, mid, timeoutMs) {
+  const cached = authorTotalCache.get(String(mid));
+  if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached.total;
+  const { data } = await client.json(`https://api.bilibili.com/x/space/navnum?mid=${enc(String(mid))}`, {
+    headers: { referer: `https://space.bilibili.com/${mid}` },
+    timeoutMs,
+  });
+  const total = Number((data && data.data && data.data.video) || 0);
+  if (total > 0) authorTotalCache.set(String(mid), { at: Date.now(), total });
+  return total;
+}
+
+/**
+ * 二分 locates the author's投稿 page that contains this video, then converts the
+ * newest-first position into "第 k 个（从最早算起）".
+ */
+async function biliAuthorRank(client, { mid, bvid, pubdate, total, timeoutMs }) {
+  if (!mid || !total || total < 2) return null;
+  const per = 20;
+  const lastPage = Math.max(1, Math.ceil(total / per));
+  let lo = 1;
+  let hi = lastPage;
+  let found = null;
+  let budget = 6;
+  while (lo <= hi && budget > 0) {
+    const page = Math.floor((lo + hi) / 2);
+    budget -= 1;
+    let rows = [];
+    try {
+      rows = await biliSpacePage(client, mid, page, timeoutMs);
+    } catch {
+      return null;
+    }
+    if (rows.length === 0) return null;
+    // 空间投稿接口的字段是 created（秒），搜索接口给的是 pubdate，两个都要认。
+    const stamp = (row) => Number(row.created || row.pubdate || 0);
+    const newest = stamp(rows[0]);
+    const oldest = stamp(rows[rows.length - 1]);
+    if (pubdate > newest) {
+      hi = page - 1;
+      continue;
+    }
+    if (pubdate < oldest) {
+      lo = page + 1;
+      continue;
+    }
+    let idx = rows.findIndex((row) => String(row.bvid || '') === bvid);
+    if (idx < 0) idx = rows.findIndex((row) => stamp(row) <= pubdate);
+    if (idx < 0) return null;
+    found = { page, idx };
+    break;
+  }
+  if (!found) return null;
+  const fromNewest = (found.page - 1) * per + found.idx;
+  return { rank: Math.max(1, total - fromNewest), total };
+}
+
+async function biliAuthorEnrich(client, mapped, timeoutMs) {
+  const deadline = Date.now() + Math.min(3000, timeoutMs);
+  const targets = mapped.filter((row) => row.extra && row.extra.mid).slice(0, 6);
+  // 序号要翻作者投稿分页，最容易被风控；只给第一条争取一下，其余只显示「共 N 个视频」。
+  const rankFor = targets.length > 0 ? targets[0] : null;
+  await Promise.all(
+    targets.map(async (row) => {
+      try {
+        const remain = deadline - Date.now();
+        if (remain < 400) return;
+        const total = await biliAuthorTotal(client, row.extra.mid, Math.min(timeoutMs, remain));
+        if (!total) return;
+        row.extra.authorTotal = total;
+        if (row !== rankFor) return;
+        const remain2 = deadline - Date.now();
+        if (remain2 < 600) return;
+        const rank = await biliAuthorRank(client, {
+          mid: row.extra.mid,
+          bvid: row.extra.bvid,
+          pubdate: row.extra.pubdate,
+          total,
+          timeoutMs: Math.min(timeoutMs, remain2),
+        });
+        if (rank) {
+          row.extra.rank = rank.rank;
+          row.extra.authorTotal = rank.total;
+        }
+      } catch {
+        /* 序号只是加分项，失败就当没有 */
+      }
+    }),
+  );
+  return mapped;
+}
+
+const DOUYIN_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+
+function douyinRouterData(html) {
+  const marker = '_ROUTER_DATA = ';
+  const at = html.indexOf(marker);
+  if (at < 0) return null;
+  const json = sliceBalanced(html, at + marker.length);
+  if (!json) return null;
+  try {
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+/** 抖音分享页（iesdouyin H5）是唯一免验证码的版本，顺手带回作者与数据。 */
+async function douyinShareInfo(client, id, timeoutMs) {
+  const { text } = await client.request(`https://www.iesdouyin.com/share/video/${id}/`, {
+    headers: { 'user-agent': DOUYIN_UA, referer: 'https://www.douyin.com/' },
+    timeoutMs: Math.min(timeoutMs, 8000),
+  });
+  const data = douyinRouterData(String(text || ''));
+  const page = data && data.loaderData ? data.loaderData['video_(id)/page'] : null;
+  const item = page && page.videoInfoRes && Array.isArray(page.videoInfoRes.item_list) ? page.videoInfoRes.item_list[0] : null;
+  if (!item) return null;
+  const cover = item.video && item.video.cover && Array.isArray(item.video.cover.url_list) ? item.video.cover.url_list[0] : '';
+  return {
+    author: String((item.author && item.author.nickname) || ''),
+    desc: String(item.desc || ''),
+    digg: Number((item.statistics && item.statistics.digg_count) || 0),
+    createTime: Number(item.create_time || 0),
+    cover: cover ? (cover.startsWith('//') ? `https:${cover}` : cover) : '',
+    shareUrl: `https://www.iesdouyin.com/share/video/${id}/`,
+  };
+}
+
+/** 抖音结果行改走分享页：用户点开看到的是能播的 H5，而不是「抖音精选」落地页。 */
+async function douyinEnrich(client, items, timeoutMs) {
+  const deadline = Date.now() + Math.min(6000, timeoutMs);
+  const targets = items
+    .filter((item) => /douyin\.com\/video\/\d{15,25}/.test(item.url))
+    .slice(0, 4);
+  // 先无条件换链接：PC 版 www.douyin.com/video/<id> 会跳「精选」并弹 APP 引导，
+  // 分享页 iesdouyin 是免验证码的 H5，浏览器里能直接播。
+  for (const item of targets) {
+    const id = (item.url.match(/\/video\/(\d{15,25})/) || [])[1];
+    if (!id) continue;
+    item.extra = { ...(item.extra || {}), webUrl: item.url };
+    item.url = `https://www.iesdouyin.com/share/video/${id}/`;
+  }
+  await Promise.all(
+    targets.map(async (item) => {
+      try {
+        const remain = deadline - Date.now();
+        if (remain < 600) return;
+        const id = (String(item.extra.webUrl || '').match(/\/video\/(\d{15,25})/) || [])[1];
+        if (!id) return;
+        const info = await douyinShareInfo(client, id, Math.min(timeoutMs, remain));
+        if (!info) return;
+        item.extra = { ...item.extra, author: info.author, digg: info.digg, createTime: info.createTime };
+        if (info.desc) item.snippet = info.desc;
+        if (info.cover) item.thumb = info.cover;
+      } catch {
+        /* 元数据拿不到就只保留换过的链接 */
+      }
+    }),
+  );
+  return items;
 }
 
 backends.bilibili = async (ctx) => {
@@ -1433,7 +1652,7 @@ backends.bilibili = async (ctx) => {
     }
     return [];
   }
-  return rows.slice(0, limit).map((row) => {
+  const mapped = rows.slice(0, limit).map((row) => {
     const bvid = String(row.bvid || '');
     const cover = String(row.pic || row.cover || '');
     return {
@@ -1442,9 +1661,19 @@ backends.bilibili = async (ctx) => {
       snippet: stripTags(row.description || ''),
       thumb: cover.startsWith('//') ? `https:${cover}` : cover,
       embed: bvid ? `https://player.bilibili.com/player.html?bvid=${bvid}&autoplay=1&high_quality=1&danmaku=0` : '',
-      extra: { author: stripTags(row.author || ''), play: row.play, duration: row.duration },
+      extra: {
+        author: stripTags(row.author || ''),
+        authorUrl: row.mid ? `https://space.bilibili.com/${row.mid}` : '',
+        mid: row.mid ? Number(row.mid) : 0,
+        bvid,
+        pubdate: Number(row.pubdate || 0),
+        play: row.play,
+        duration: row.duration,
+      },
     };
   });
+  // 作者作品总数 / 这是他的第几个视频（失败就只显示作者）
+  return biliAuthorEnrich(client, mapped, timeoutMs);
 };
 
 export const BACKENDS = backends;
@@ -1592,6 +1821,9 @@ export async function runSearch(options) {
       );
       const items0 = def.list === true ? collected : keepRelevant(collected, relevanceTokens(query));
       let items = items0.slice(0, limit);
+      if (id === 'douyin' && items.length > 0) {
+        items = await douyinEnrich(client, items, platformTimeout);
+      }
       // 站内兜底：一条都没留下，或者少得可怜（< 3 条）时，用 site: 站内检索补一批再合并去重。
       // 单平台抓取本身有上限（bing 只有 10 条），不补的话「B 站只剩 1 条」这种会白白丢掉条数。
       if (def.list !== true && def.site && items.length < Math.min(3, limit)) {
