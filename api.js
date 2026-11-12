@@ -15,6 +15,7 @@ import { openInBrowser } from './open.js';
 import { importBrowserCookies, mergeCookies } from './browserCookies.js';
 import { checkLogin, loginTarget, cookieMapFromPaste, cookiesForDomain } from './login.js';
 import { ensureBrowserSession, captureBrowserCookies, browserStatus } from './browserAuth.js';
+import { createCache } from './cache.js';
 
 const MAX_BODY = 256 * 1024;
 
@@ -94,7 +95,37 @@ function summarize(result) {
  * Creates the JSON endpoint used by the dock widget.
  * Every operation answers `{ ok: true, data }` or `{ ok: false, error: { message } }`.
  */
-export function createApi({ store, defaults, readMessages, clientGraph }) {
+const SEARCH_CACHE_VERSION = 's1';
+
+function cacheKeyFor(settings, parts) {
+  return [SEARCH_CACHE_VERSION, settings.proxy ? 'proxy' : 'direct', parts.join('|')].join('::');
+}
+
+function searchCacheKey(settings, query, platforms, limit, pages) {
+  return cacheKeyFor(settings, ['search', query.trim().toLowerCase(), platforms.join(','), String(limit), String(pages)]);
+}
+
+function readCacheKey(url) {
+  return ['p1', url].join('::');
+}
+
+const DEFAULT_CACHE_TTL = 6 * 60 * 60 * 1000;
+const CACHE_TTL_MIN = 60 * 1000;
+const CACHE_TTL_MAX = 24 * 60 * 60 * 1000;
+
+/** 每次写入都按当前配置算 TTL，所以改 cacheTtlMs 立刻生效（不用重启 Host）。 */
+function ttlFrom(settings) {
+  const raw = Number(settings && settings.cacheTtlMs);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_CACHE_TTL;
+  return Math.min(CACHE_TTL_MAX, Math.max(CACHE_TTL_MIN, raw));
+}
+
+export function createApi({ store, defaults, readMessages, clientGraph, cache: injectedCache }) {
+  const cache =
+    injectedCache ||
+    createCache({
+      ttlMs: Math.min(24 * 60 * 60 * 1000, Math.max(60 * 1000, Number(defaults.cacheTtlMs) || 6 * 60 * 60 * 1000)),
+    });
   function syncCustomPlatforms() {
     registerCustomPlatforms(store.get('customPlatforms'));
   }
@@ -183,6 +214,19 @@ export function createApi({ store, defaults, readMessages, clientGraph }) {
         const limit = Math.min(30, Math.max(1, Number(payload.limit) || settings.limit));
         const pages = Math.min(4, Math.max(1, Number(payload.pages) || Number(settings.pages) || 3));
         const timeoutMs = Math.min(30000, Math.max(3000, Number(payload.timeoutMs) || settings.timeoutMs));
+        const key = searchCacheKey(settings, query, platforms, limit, pages);
+        const cached = payload.refresh === true ? undefined : cache.get(key);
+        if (cached !== undefined) {
+          const data = summarize(cached.value);
+          data.cached = true;
+          data.cacheAgeMs = cached.ageMs;
+          data.cacheSource = cached.source;
+          if (payload.open === true) {
+            const first = data.results.find((item) => /^https?:\/\//i.test(item.url));
+            if (first) data.opened = openInBrowser(first.url);
+          }
+          return data;
+        }
         const result = await runSearch({
           query,
           platforms,
@@ -192,6 +236,7 @@ export function createApi({ store, defaults, readMessages, clientGraph }) {
           proxy,
           cookies: settings.cookies || {},
         });
+        cache.set(key, result, ttlFrom(settings));
         store.record({
           at: new Date().toISOString(),
           query: result.query,
@@ -201,6 +246,7 @@ export function createApi({ store, defaults, readMessages, clientGraph }) {
           origin: 'dock',
         });
         const data = summarize(result);
+        data.cached = false;
         if (payload.open === true) {
           const first = data.results.find((item) => /^https?:\/\//i.test(item.url));
           if (first) data.opened = openInBrowser(first.url);
@@ -222,8 +268,15 @@ export function createApi({ store, defaults, readMessages, clientGraph }) {
       case 'read': {
         const url = String(payload.url || '').trim();
         if (url === '') throw new Error('缺少 url');
-        const page = await readPage({ url, proxy, maxChars: payload.maxChars, timeoutMs: settings.timeoutMs });
-        return page;
+        const maxChars = Math.min(20000, Math.max(500, Number(payload.maxChars) || 6000));
+        const key = readCacheKey(url) + '::' + String(maxChars);
+        const cached = payload.refresh === true ? undefined : cache.get(key);
+        if (cached !== undefined) {
+          return { ...cached.value, cached: true, cacheAgeMs: cached.ageMs, cacheSource: cached.source };
+        }
+        const page = await readPage({ url, proxy, maxChars, timeoutMs: settings.timeoutMs });
+        cache.set(key, page, ttlFrom(settings));
+        return { ...page, cached: false };
       }
       case 'config': {
         return store.patch(payload.patch || {});
@@ -233,6 +286,12 @@ export function createApi({ store, defaults, readMessages, clientGraph }) {
       }
       case 'clear': {
         return store.clearHistory();
+      }
+      case 'cache.stats': {
+        return cache.stats();
+      }
+      case 'cache.clear': {
+        return cache.clear();
       }
       case 'graph': {
         return typeof clientGraph === 'function' ? clientGraph() : { available: false };

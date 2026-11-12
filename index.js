@@ -11,6 +11,7 @@ import {
 import { openInBrowser } from './open.js';
 import { ScoutStore } from './store.js';
 import { createApi } from './api.js';
+import { createCache } from './cache.js';
 
 export const name = 'web-scout';
 export const inject = ['tools', 'webServer'];
@@ -98,6 +99,7 @@ export function apply(ctx, config = {}) {
     limit: Number(config.limit) || 12,
     timeoutMs: Number(config.timeoutMs) || 12000,
     maxPlatforms: Number(config.maxPlatforms) || 10,
+    cacheTtlMs: Number(config.cacheTtlMs) || 6 * 60 * 60 * 1000,
     defaultPlatforms: Array.isArray(config.defaultPlatforms) && config.defaultPlatforms.length > 0 ? config.defaultPlatforms : ['bing', 'so360', 'csdn', 'juejin', 'toutiao', 'v2ex', 'zhihu', 'bilibili', 'weixin'],
   };
   const ready = store.load().catch(() => {});
@@ -195,10 +197,15 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  // 搜索与正文读取共用一份缓存（内存 LRU + SQLite），工具与面板谁先查谁写。
+  const cache = createCache({
+    ttlMs: Math.min(24 * 60 * 60 * 1000, Math.max(60 * 1000, Number(defaults.cacheTtlMs) || 6 * 60 * 60 * 1000)),
+  });
   const api = createApi({
     store,
     defaults,
     clientGraph,
+    cache,
     readMessages: (sessionId) => {
       const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : undefined;
       if (!sessions || typeof sessions.get !== 'function') return [];
@@ -302,15 +309,29 @@ export function apply(ctx, config = {}) {
           hinted,
         ).slice(0, current.maxPlatforms || defaults.maxPlatforms);
         const limit = Math.min(20, Math.max(1, Number(options.limit) || current.limit || defaults.limit));
+        const pages = Math.min(4, Math.max(1, Number(options.pages) || Number(current.pages) || defaults.pages || 2));
         const timeoutMs = Math.min(30000, Math.max(3000, Number(options.timeoutMs) || current.timeoutMs || defaults.timeoutMs));
+        const cacheKey = [
+          'tool1',
+          current.proxy ? 'proxy' : 'direct',
+          query.trim().toLowerCase(),
+          platforms.join(','),
+          String(limit),
+          String(pages),
+        ].join('::');
+        const cached = options.refresh === true ? undefined : cache.get(cacheKey);
+        if (cached !== undefined) {
+          return { ...cached.value, cached: true, cacheAgeMs: cached.ageMs };
+        }
         const result = await runSearch({
-      query,
-      platforms,
-      limit,
-      timeoutMs,
-      proxy: current.proxy || undefined,
-      cookies: current.cookies || {},
-    });
+          query,
+          platforms,
+          limit,
+          pages,
+          timeoutMs,
+          proxy: current.proxy || undefined,
+          cookies: current.cookies || {},
+        });
         store.record({
           at: new Date().toISOString(),
           query: result.query,
@@ -321,7 +342,7 @@ export function apply(ctx, config = {}) {
           session: hint.id,
         });
         const opened = options.open === true ? openInBrowser(firstBrowserUrl(result) || result.platforms[0]?.browser || 'https://www.bing.com') : undefined;
-        return {
+        const payloadOut = {
           query: result.query,
           mode: result.mode,
           sessionId: hint.id || null,
@@ -338,7 +359,10 @@ export function apply(ctx, config = {}) {
           blocked: result.blocked,
           tunnelSuggested: result.tunnelSuggested,
           opened: opened || null,
+          cached: false,
         };
+        cache.set(cacheKey, payloadOut, Math.min(24 * 60 * 60 * 1000, Math.max(60 * 1000, Number(current.cacheTtlMs) || defaults.cacheTtlMs)));
+        return payloadOut;
       },
     }),
   );

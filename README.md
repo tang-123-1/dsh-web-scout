@@ -181,6 +181,24 @@ node scripts/smoke.mjs "cordis 插件"
 
 ![检索结果带进输入框](docs/panel-tochat.png)
 
+### 正文读取与缓存（v1.14）
+
+搜索和读正文都走**两级缓存**，重复查询几乎零成本：
+
+| 层 | 位置 | 命中耗时 | 说明 |
+| --- | --- | --- | --- |
+| 内存 LRU | 进程内，最多 240 条 | 约 1 ms | 同一会话反复搜同一个词 |
+| SQLite | `~/.dsh/web-scout-cache.db`（WAL） | 约 2–4 ms | 重启 DSH 后仍然生效 |
+
+- 默认 TTL 6 小时，可用配置项 `cacheTtlMs` 调（60 秒 – 24 小时）。
+- 缓存键包含查询词、平台列表、条数、页数、代理设置，所以换代理/换条数不会命中同一份结果。
+- 面板上命中缓存时标题会多一个**「缓存 3s」**徽标（3s = 这份结果存在了 3 秒）；旁边的**刷新**按钮会绕过缓存重新联网。
+- 工具调用同理：`web_scout_search` 传 `refresh: true` 可强制刷新；`web_scout_read` 抓过的正文再次读是毫秒级。
+- 缓存坏了不会影响搜索：SQLite 打不开时自动退化成纯内存（`cache.stats` 里 `persistent:false` 会显示原因）。
+- 维护接口：`POST /web-scout/api {"op":"cache.stats"}` 看命中数/行数/文件路径；`{"op":"cache.clear"}` 清空。
+
+![命中缓存的标题徽标与刷新按钮](docs/panel-cache.png)
+
 ### 三个工具（Agent 侧）
 
 | 工具 | 参数 | 用途 |
@@ -196,8 +214,9 @@ node scripts/smoke.mjs "cordis 插件"
 | op | 主要参数 | 说明 |
 | --- | --- | --- |
 | `catalog` | — | 平台清单 + 当前配置 + 芯片 + 登录状态 |
-| `search` | `query?` `platforms?` `limit?` `pages?` `context?` `sessionId?` `open?` | 检索并记录历史 |
-| `read` | `url` `maxChars?` | 抓网页正文 |
+| `search` | `query?` `platforms?` `limit?` `pages?` `context?` `sessionId?` `open?` `refresh?` | 检索并记录历史；命中缓存直接返回（`refresh:true` 强制重新联网） |
+| `read` | `url` `maxChars?` | 抓网页正文（同样走缓存） |
+| `cache.stats` / `cache.clear` | — | 缓存统计（命中数/行数/字节/文件）/ 清空缓存 |
 | `open` | `url?` `platform?` `query?` | 系统浏览器打开 |
 | `config` | `patch:{}` | 改代理 / 条数 / 默认平台等 |
 | `chips` | `chips:[]` | 保存芯片条 |

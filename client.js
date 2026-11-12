@@ -23,6 +23,10 @@ window.__ModuleLoader__.load({
         chatAdded: '已加入输入框，回车即可发送',
         chatFailed: '输入框正忙，稍后再试',
         shellTag: '中转',
+        cacheTag: '缓存',
+        cacheHint: '结果来自本地缓存（内存 LRU + SQLite），没有重新联网；要最新数据点「刷新」',
+        refresh: '刷新',
+        refreshHint: '忽略缓存，重新联网搜一次',
         shellHint: '这条结果的链接是搜索站的中转壳，点开会跳一次再进正文',
         open: '打开',
         panel: '联网检索结果',
@@ -102,6 +106,10 @@ window.__ModuleLoader__.load({
         chatAdded: 'Added to the composer — press Enter to send',
         chatFailed: 'Composer is busy, try again',
         shellTag: 'Redirect',
+        cacheTag: 'cached',
+        cacheHint: 'Served from the local cache (LRU + SQLite) without going online; hit Refresh for fresh data',
+        refresh: 'Refresh',
+        refreshHint: 'Skip the cache and search the web again',
         shellHint: 'This link is a search-engine redirect shell; it bounces once before the article',
         open: 'Open',
         panel: 'Web scout results',
@@ -1061,13 +1069,14 @@ function statusStyle(status) {
         });
       };
 
-      const run = async () => {
+      const run = async (options) => {
         if (busy) return;
+        const force = Boolean(options && options.refresh === true);
         setOnly('');
         setBusy(true);
         setError('');
         try {
-          const value = await post('search', { query: query, platforms: selected, sessionId: sessionId });
+          const value = await post('search', { query: query, platforms: selected, sessionId: sessionId, refresh: force });
           setData(value);
         } catch (failure) {
           setError(String((failure && failure.message) || failure));
@@ -1195,6 +1204,16 @@ function statusStyle(status) {
                       'span',
                       { style: S.headSub },
                       `「${data.query}」 ${only ? `${seenRows.length} / ${rows.length}` : rows.length} ${t('results')}`,
+                      data.cached
+                        ? h(
+                            'span',
+                            {
+                              style: merge(S.kindTag, { marginLeft: '6px' }),
+                              title: t('cacheHint'),
+                            },
+                            `${t('cacheTag')} ${Math.max(1, Math.round((Number(data.cacheAgeMs) || 0) / 1000))}s`,
+                          )
+                        : null,
                     )
                   : null,
               ),
@@ -1261,6 +1280,19 @@ function statusStyle(status) {
                 },
                 busy ? t('searching') : t('search'),
               ),
+              data
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      title: t('refreshHint'),
+                      disabled: busy,
+                      onClick: () => run({ refresh: true }),
+                      style: merge(S.button, busy ? S.buttonDisabled : null),
+                    },
+                    t('refresh'),
+                  )
+                : null,
             ),
             h(
               'div',

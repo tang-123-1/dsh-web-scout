@@ -15,6 +15,7 @@ const DEFAULTS = {
   timeoutMs: 12000,
   maxPlatforms: 10,
   autoOpen: false,
+  cacheTtlMs: 6 * 60 * 60 * 1000,
   defaultPlatforms: ['bing', 'so360', 'csdn', 'juejin', 'toutiao', 'v2ex', 'zhihu', 'bilibili', 'weixin'],
   chips: ['auto', 'bing', 'zhihu', 'bilibili', 'douyin', 'douyinhot', 'csdn', 'juejin'],
   customPlatforms: [],
@@ -43,6 +44,10 @@ function normalize(raw) {
   const maxPlatforms = Number(value.maxPlatforms);
   if (Number.isFinite(maxPlatforms)) out.maxPlatforms = Math.min(14, Math.max(1, Math.round(maxPlatforms)));
   if (typeof value.autoOpen === 'boolean') out.autoOpen = value.autoOpen;
+  const cacheTtlMs = Number(value.cacheTtlMs);
+  if (Number.isFinite(cacheTtlMs)) {
+    out.cacheTtlMs = Math.min(24 * 60 * 60 * 1000, Math.max(60 * 1000, Math.round(cacheTtlMs)));
+  }
   if (Array.isArray(value.defaultPlatforms) && value.defaultPlatforms.length > 0) {
     const list = value.defaultPlatforms.map((item) => String(item)).slice(0, 10);
     // v1.5 迁移：旧默认值是 4 个源，识别出来后升级成 6 个（加了头条 / V2EX）

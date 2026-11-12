@@ -2,6 +2,24 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
+## 1.14.0 — 2026-11-13
+
+**为什么改**：路线图第 1 步。搜索一次要 1 秒左右、读一篇正文要 1 秒，而同一个词/同一个链接在几分钟内经常被重复请求（面板手滑再点一次、工具重跑、对话里反复引用同一篇）。这部分延迟和上游限额都是白花的。
+
+### 新增
+- `cache.js`：两级缓存。内存 LRU（240 条）+ `node:sqlite` 持久层（WAL、`cache` 表、过期索引），键取 `sha1`，默认 TTL 6 小时。
+- `cache.stats` / `cache.clear` 两个 HTTP op：命中数、行数、占用字节、文件路径、是否持久化、错误原因。
+- 搜索与正文读取全部接缓存：命中直接返回，payload 带 `cached` / `cacheAgeMs` / `cacheSource`。
+- 面板：标题出现「缓存 3s」徽标，搜索按钮旁新增「刷新」（绕过缓存）。
+- 工具 `web_scout_search` 支持 `refresh`；顺带补上 `pages` 参数（此前工具侧固定用默认页数）。
+
+### 修
+- SQLite 打不开时**不再抛错**：退化成纯内存缓存，搜索照常工作，`cache.stats.persistent` 为 false 并带 `error` 说明。
+
+### 验收
+- `_probe/verify-cache.mjs` 13 项全通过（内存命中、跨实例命中、TTL 过期、wrap 只跑一次、落盘失败降级、API 命中/刷新、stats/clear、正文缓存、maxChars 分键）。
+- live：搜索首次 1100 ms → 二次 4 ms；正文首次 1074 ms → 二次 2 ms；`refresh` 重新联网 933 ms。
+
 ## 1.13.0 — 空壳结果过滤
 
 - **中转壳不再是真地址**：百度 SERP 的 `<h3><a href>` 常是 `www.baidu.com/link?url=…`，真地址在结果容器的 `mu` 属性上。`backends.baidu` 改为优先取 `mu`/`data-landurl`，离线复解析 19/19 条全部还原成 baike/知乎/公众号/百家号直链。
