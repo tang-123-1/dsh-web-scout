@@ -2252,6 +2252,391 @@ export async function readPage(options) {
   };
 }
 
+// ---------------------------------------------------------------- 证据包（v1.17）
+const EVIDENCE_DEFAULTS = {
+  budgetChars: 6000,
+  maxItems: 10,
+  perPlatform: 3,
+  excerptChars: 240,
+};
+
+const KIND_LABELS = {
+  video: '视频',
+  article: '文章',
+  qa: '问答',
+  forum: '论坛',
+  hot: '榜单',
+  shop: '商品',
+  code: '代码',
+  doc: '文档',
+  social: '动态',
+  web: '网页',
+};
+
+/** 把一句文本切成句子（中英标点都切），用于挑「最相关的那句」当摘录。 */
+function sentenceSplit(text) {
+  return String(text || '')
+    .replace(/\s+/gu, ' ')
+    .split(/(?<=[。！？!?；;])\s*|(?<=\.)\s+(?=[A-Z])/u)
+    .map((part) => part.trim())
+    .filter((part) => part !== '');
+}
+
+function tokenHits(haystack, tokens, grams) {
+  const compact = squeeze(haystack);
+  if (compact === '') return 0;
+  let hits = 0;
+  for (const token of tokens) if (compact.includes(token)) hits += 1;
+  if (grams.length > 0) {
+    let gramHits = 0;
+    for (const gram of grams) if (compact.includes(gram)) gramHits += 1;
+    hits += (gramHits / grams.length) * Math.min(2, tokens.length || 1);
+  }
+  return hits;
+}
+
+function freshnessScore(extra) {
+  if (!extra || typeof extra !== 'object') return 0;
+  const raw = extra.pubdate || extra.publishedAt || extra.createTime || extra.date || extra.ctime || 0;
+  let stamp = Number(raw);
+  if (!Number.isFinite(stamp) || stamp <= 0) {
+    const parsed = Date.parse(String(raw));
+    stamp = Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (!stamp) return 0;
+  if (stamp < 1e11) stamp *= 1000; // 秒 → 毫秒
+  const days = (Date.now() - stamp) / 86400000;
+  if (days < 0) return 0.3;
+  if (days <= 7) return 1;
+  if (days <= 30) return 0.6;
+  if (days <= 365) return 0.3;
+  return 0.1;
+}
+
+function backendWeight(item) {
+  const platform = String(item.platform || '');
+  if (platform.startsWith('custom:')) return 0.7;
+  const def = PLATFORMS.get(platform);
+  if (!def) return 0.5;
+  if (def.list === true) return 0.55;
+  if (def.backend !== undefined) return 1;
+  if (def.url !== undefined) return 0.8;
+  return 0.6; // site: 兜底
+}
+
+function pickExcerpt(item, tokens, grams, excerptChars) {
+  const pool = [item.snippet, item.description, item.extra && item.extra.desc]
+    .filter((value) => typeof value === 'string' && value.trim() !== '');
+  if (pool.length === 0) return '';
+  const sentences = pool.flatMap((value) => sentenceSplit(value));
+  let best = '';
+  let bestScore = 0;
+  for (const sentence of sentences) {
+    const score = tokenHits(sentence, tokens, grams);
+    if (score > bestScore) {
+      best = sentence;
+      bestScore = score;
+    }
+  }
+  const chosen = best === '' ? sentences[0] || pool[0] : best;
+  const clean = chosen.replace(/\s+/gu, ' ').trim();
+  return clean.length > excerptChars ? `${clean.slice(0, excerptChars - 1)}…` : clean;
+}
+
+/**
+ * 把一次搜索的原始结果压成「证据包」：评分 + 摘录 + 覆盖面 + 缺口，带字符预算。
+ * 目的：给模型的不是 90 条标题，而是 10 条有理由、有引用、能追溯的东西。
+ */
+export function packEvidence(options = {}) {
+  const query = String(options.query || '');
+  const budgetChars = Math.min(20000, Math.max(800, Number(options.budgetChars) || EVIDENCE_DEFAULTS.budgetChars));
+  const maxItems = Math.min(20, Math.max(1, Number(options.maxItems) || EVIDENCE_DEFAULTS.maxItems));
+  const perPlatform = Math.min(8, Math.max(1, Number(options.perPlatform) || EVIDENCE_DEFAULTS.perPlatform));
+  const excerptChars = Math.min(600, Math.max(80, Number(options.excerptChars) || EVIDENCE_DEFAULTS.excerptChars));
+
+  const tokens = relevanceTokens(query);
+  const grams = cjkGrams(query);
+  const raw = Array.isArray(options.results) ? options.results : [];
+  const total = raw.length;
+
+  const seen = new Set();
+  const scored = [];
+  raw.forEach((item, index) => {
+    if (!item || typeof item.url !== 'string' || item.url === '') return;
+    const key = dedupeKey(item.url, item.title);
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    const titleHits = tokenHits(item.title || '', tokens, grams);
+    const snippetHits = tokenHits(`${item.snippet || ''} ${(item.extra && item.extra.desc) || ''}`, tokens, grams);
+    const positionScore = 1 - index / Math.max(1, total);
+    const score =
+      0.42 * Math.min(1, titleHits / Math.max(1, tokens.length || 1)) +
+      0.22 * Math.min(1, snippetHits / Math.max(1, tokens.length || 1)) +
+      0.16 * positionScore +
+      0.12 * backendWeight(item) +
+      0.08 * freshnessScore(item.extra);
+
+    scored.push({ item, index, score, titleHits, snippetHits });
+  });
+
+  scored.sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score;
+    return left.index - right.index;
+  });
+
+  const used = new Map();
+  const items = [];
+  const droppedByBudget = [];
+  const droppedByPlatform = [];
+  let usedChars = 0;
+
+  for (const entry of scored) {
+    const platform = entry.item.platform || '';
+    const taken = used.get(platform) || 0;
+    if (taken >= perPlatform) {
+      droppedByPlatform.push(entry.item);
+      continue;
+    }
+    if (items.length >= maxItems) {
+      droppedByBudget.push(entry.item);
+      continue;
+    }
+    const excerpt = pickExcerpt(entry.item, tokens, grams, excerptChars);
+    const cost = (entry.item.title || '').length + (entry.item.url || '').length + excerpt.length + 48;
+    if (usedChars + cost > budgetChars) {
+      droppedByBudget.push(entry.item);
+      continue;
+    }
+    usedChars += cost;
+    used.set(platform, taken + 1);
+    items.push({
+      title: entry.item.title || entry.item.url,
+      url: entry.item.url,
+      platform,
+      platformLabel: entry.item.platformLabel || platform,
+      kind: entry.item.kind || 'article',
+      score: Number(entry.score.toFixed(3)),
+      excerpt,
+      thumb: entry.item.thumb || '',
+      embed: entry.item.embed || '',
+      extra: entry.item.extra || undefined,
+      why: [
+        entry.titleHits > 0 ? '标题命中查询词' : '',
+        entry.snippetHits > 0 ? '摘要命中查询词' : '',
+        entry.index < 3 ? `原始排名第 ${entry.index + 1}` : '',
+        backendWeight(entry.item) >= 1 ? '原生接口' : '',
+      ].filter(Boolean).join(' · '),
+    });
+  }
+
+  const coverage = [];
+  const byPlatform = new Map();
+  for (const item of raw) {
+    const platform = item.platform || '';
+    if (!byPlatform.has(platform)) byPlatform.set(platform, { platform, platformLabel: item.platformLabel || platform, kind: item.kind || 'article', count: 0 });
+    byPlatform.get(platform).count += 1;
+  }
+  for (const value of byPlatform.values()) {
+    coverage.push({ ...value, selected: used.get(value.platform) || 0 });
+  }
+  coverage.sort((left, right) => right.count - left.count);
+
+  const selectedKinds = new Set(items.map((item) => item.kind));
+  const gaps = [];
+  for (const value of byPlatform.values()) {
+    if (!selectedKinds.has(value.kind)) {
+      gaps.push({ kind: value.kind, label: KIND_LABELS[value.kind] || value.kind, reason: `有 ${value.count} 条${KIND_LABELS[value.kind] || value.kind}结果未纳入（预算/配额）`, platform: value.platform });
+    }
+  }
+  const platformNotes = (Array.isArray(options.platforms) ? options.platforms : [])
+    .filter((entry) => entry && entry.status !== 'ok')
+    .map((entry) => ({ id: entry.id, label: entry.label, status: entry.status, note: entry.note || '' }));
+
+  return {
+    query,
+    generatedAt: new Date().toISOString(),
+    budgetChars,
+    usedChars,
+    excerptChars,
+    perPlatform,
+    total,
+    selected: items.length,
+    items,
+    coverage,
+    gaps,
+    platformNotes,
+    dropped: {
+      budget: droppedByBudget.length,
+      perPlatform: droppedByPlatform.length,
+      duplicates: total - scored.length,
+    },
+  };
+}
+
+/** 证据包的纯文本形态：给模型/输入框用，已按预算压好。 */
+export function formatEvidence(pack, options = {}) {
+  const title = String(options.title || '证据包');
+  const lines = [];
+  lines.push(`${title}｜查询：${pack.query === '' ? '（榜单/信息流）' : pack.query}`);
+  lines.push(`来源 ${pack.coverage.length} 个平台 · 选中 ${pack.selected}/${pack.total} 条 · 预算 ${pack.usedChars}/${pack.budgetChars} 字`);
+  lines.push('');
+  pack.items.forEach((item, index) => {
+    lines.push(`${index + 1}. ${item.title}`);
+    lines.push(`   ${item.platformLabel} · ${KIND_LABELS[item.kind] || item.kind} · ${item.url}`);
+    if (item.excerpt) lines.push(`   > ${item.excerpt}`);
+    if (item.why) lines.push(`   依据：${item.why}`);
+  });
+  if (pack.gaps.length > 0) {
+    lines.push('');
+    lines.push(`缺口：${pack.gaps.map((gap) => `${gap.label}（${gap.reason}）`).join('；')}`);
+  }
+  if (pack.platformNotes.length > 0) {
+    lines.push(`未纳入的平台：${pack.platformNotes.map((note) => `${note.label}（${note.status}${note.note ? `：${note.note}` : ''}）`).join('；')}`);
+  }
+  return lines.join('\n');
+}
+
+/** 跑一次搜索然后直接出证据包（给面板/MCP 用，缓存由调用方负责）。 */
+export async function searchEvidence(options = {}) {
+  const search = await runSearch(options);
+  const pack = packEvidence({
+    query: search.query,
+    results: search.results,
+    platforms: search.platforms,
+    budgetChars: options.budgetChars,
+    maxItems: options.maxItems,
+    perPlatform: options.perPlatform,
+    excerptChars: options.excerptChars,
+  });
+  return { ...pack, mode: search.mode, tunnelSuggested: search.tunnelSuggested, text: formatEvidence(pack) };
+}
+
+// ---------------------------------------------------------------- 连通性体检（v1.17）
+/**
+ * 逐个平台真打一次，给出「现在到底哪些能搜」。
+ * 只探测有原生通道的平台（backend / url / 外部 provider），纯 site: 兜底平台标 site 跳过——
+ * 它们依赖 bing/so360，而那两个本身就在探测列表里。
+ */
+export async function checkPlatforms(options = {}) {
+  const timeoutMs = Math.min(20000, Math.max(2000, Number(options.timeoutMs) || 8000));
+  const query = String(options.query || 'cordis').trim() || 'cordis';
+  const deep = options.deep === true;
+  const concurrency = Math.min(8, Math.max(1, Number(options.concurrency) || 4));
+
+  const requestedRaw = Array.isArray(options.platforms) ? options.platforms.filter((id) => typeof id === 'string' && id !== '') : [];
+  const explicitUnknown = requestedRaw.filter((id) => !PLATFORMS.has(id) && id !== 'auto' && id !== 'all');
+  const requested = requestedRaw.length > 0
+    ? resolvePlatforms(requestedRaw, options.defaultPlatforms || [], [])
+    : Array.from(PLATFORMS.keys());
+
+  const targets = [];
+  const skipped = explicitUnknown.map((id) => ({ id, reason: 'unknown', note: '没有这个平台' }));
+  for (const id of requested) {
+    const def = PLATFORMS.get(id);
+    if (!def) {
+      if (!skipped.some((entry) => entry.id === id)) skipped.push({ id, reason: 'unknown', note: '没有这个平台' });
+      continue;
+    }
+    const provider = providers.get(id);
+    const native = Boolean((provider && typeof provider.search === 'function') || def.backend !== undefined || def.url !== undefined);
+    if (!native) {
+      if (def.site && !deep) {
+        skipped.push({ id, label: def.label || def.zh || id, reason: 'site-fallback', note: '站内兜底，依赖 bing/so360' });
+        continue;
+      }
+    }
+    targets.push({ id, def, provider });
+  }
+
+  const cookies = options.cookies && typeof options.cookies === 'object' ? options.cookies : {};
+  const client = createClient({ proxy: options.proxy, cookies, timeoutMs });
+
+  const items = [];
+  let cursor = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= targets.length) return;
+      const { id, def, provider } = targets[index];
+      const label = def.label || def.zh || id;
+      const started = Date.now();
+      try {
+        let rows = [];
+        if (provider && typeof provider.search === 'function') {
+          rows = await provider.search({ client, query, limit: 2, timeoutMs, page: 1, pages: 1 });
+        } else if (def.backend !== undefined && BACKENDS[def.backend]) {
+          rows = await BACKENDS[def.backend]({ client, query, limit: 2, timeoutMs, page: 1, pages: 1 });
+        } else if (def.url !== undefined) {
+          rows = await fetchCustom({ client, def, query, limit: 2, timeoutMs });
+        }
+        const ms = Date.now() - started;
+        const list = Array.isArray(rows) ? rows : [];
+        const usable = def.list === true ? list : keepRelevant(list, relevanceTokens(query), query);
+        items.push({
+          id,
+          label,
+          kind: def.kind || 'article',
+          status: usable.length > 0 ? 'ok' : 'empty',
+          ms,
+          count: list.length,
+          usable: usable.length,
+          note: usable.length > 0 ? `${ms}ms` : `${ms}ms · 没返回可用结果`,
+        });
+      } catch (error) {
+        const ms = Date.now() - started;
+        const message = String((error && error.message) || error);
+        const status = error && error.login === true ? 'login' : error instanceof EngineBlocked ? 'blocked' : 'error';
+        items.push({
+          id,
+          label,
+          kind: def.kind || 'article',
+          status,
+          ms,
+          count: 0,
+          usable: 0,
+          note: status === 'login' ? `需要登录：${message}` : message.slice(0, 160),
+        });
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, targets.length)) }, worker));
+
+  items.sort((left, right) => left.id.localeCompare(right.id));
+  const tally = { ok: 0, empty: 0, blocked: 0, login: 0, error: 0 };
+  for (const item of items) tally[item.status] = (tally[item.status] || 0) + 1;
+  return {
+    checkedAt: new Date().toISOString(),
+    query,
+    timeoutMs,
+    total: items.length,
+    ok: tally.ok,
+    tally,
+    items,
+    skipped,
+    healthy: tally.ok > 0,
+  };
+}
+
+/** 体检结果的纯文本形态。 */
+export function formatHealth(report) {
+  const lines = [];
+  const { tally } = report;
+  lines.push(`连通性体检｜可用 ${tally.ok} · 空结果 ${tally.empty} · 被拦 ${tally.blocked} · 需登录 ${tally.login} · 出错 ${tally.error}`);
+  lines.push('');
+  const icon = (status) => (status === 'ok' ? '✓' : status === 'empty' ? '·' : status === 'blocked' ? '!' : status === 'login' ? '🔑' : '×');
+  for (const item of report.items) {
+    lines.push(`${icon(item.status)} ${item.label}（${item.id}）· ${item.status} · ${item.ms}ms${item.note && item.status !== 'ok' ? ` · ${item.note}` : ''}`);
+  }
+  if (report.skipped.length > 0) {
+    lines.push('');
+    lines.push(`跳过：${report.skipped.map((entry) => entry.label || entry.id).join('、')}（站内兜底，跟着 bing/360 走）`);
+  }
+  return lines.join('\n');
+}
+
 export function browserUrlFor(platformId, query) {
   const def = PLATFORMS.get(platformId);
   if (def && def.browser) return def.browser(query);

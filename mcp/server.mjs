@@ -27,6 +27,10 @@ import {
   readPage,
   resolvePlatforms,
   runSearch,
+  packEvidence,
+  formatEvidence,
+  checkPlatforms,
+  formatHealth,
 } from '../engines.js';
 
 const SERVER_NAME = 'web-scout';
@@ -212,6 +216,86 @@ async function toolRead(args) {
   return { payload: { ...page, cached: outcome.cached, cacheAgeMs: outcome.ageMs, cacheSource: outcome.source }, text };
 }
 
+async function toolEvidence(args) {
+  const current = settings();
+  const query = typeof args.query === 'string' ? args.query.trim() : '';
+  const platformsInput = Array.isArray(args.platforms) && args.platforms.length > 0 ? args.platforms : ['auto'];
+  const platforms = resolvePlatforms(platformsInput, current.defaultPlatforms, []).slice(0, Math.min(14, current.maxPlatforms));
+  const limit = Math.min(30, Math.max(1, Number(args.limit) || current.limit));
+  const pages = Math.min(4, Math.max(1, Number(args.pages) || current.pages));
+  const feedOnly = platforms.length > 0 && platforms.every((id) => {
+    const def = PLATFORMS.get(id);
+    return Boolean(def && def.list === true);
+  });
+  if (query === '' && !feedOnly) throw new Error('缺少 query：关键词检索必须给查询词（榜单类平台可以留空）');
+
+  const packOptions = {
+    budgetChars: Math.min(20000, Math.max(800, Number(args.budgetChars) || 6000)),
+    maxItems: Math.min(20, Math.max(1, Number(args.maxItems) || 10)),
+    perPlatform: Math.min(8, Math.max(1, Number(args.perPlatform) || 3)),
+    excerptChars: Math.min(600, Math.max(80, Number(args.excerptChars) || 240)),
+  };
+  const key = ['ev', current.proxy || 'direct', query, platforms.join(','), limit, pages, JSON.stringify(packOptions)].join('::');
+  if (args.refresh === true) {
+    try { getCache().forget(`mcp::${key}`); } catch { /* ignore */ }
+  }
+  const outcome = await cachedSearch(
+    key,
+    async () => {
+      const result = await runSearch({
+        query,
+        platforms,
+        limit,
+        pages,
+        timeoutMs: Math.min(30000, Math.max(3000, Number(args.timeoutMs) || current.timeoutMs)),
+        proxy: current.proxy,
+        cookies: current.cookies,
+        defaultPlatforms: current.defaultPlatforms,
+        hints: [],
+        maxPlatforms: current.maxPlatforms,
+      });
+      const packed = packEvidence({ query: result.query, results: result.results, platforms: result.platforms, ...packOptions });
+      return { ...packed, mode: result.mode, tunnelSuggested: result.tunnelSuggested, text: formatEvidence(packed) };
+    },
+    Math.min(24 * 60 * 60 * 1000, Math.max(60 * 1000, current.cacheTtlMs)),
+  );
+  const value = outcome.value;
+  return {
+    payload: {
+      query: value.query,
+      selected: value.selected,
+      total: value.total,
+      usedChars: value.usedChars,
+      budgetChars: value.budgetChars,
+      items: value.items,
+      coverage: value.coverage,
+      gaps: value.gaps,
+      platformNotes: value.platformNotes,
+      dropped: value.dropped,
+      mode: value.mode,
+      tunnelSuggested: value.tunnelSuggested,
+      cached: outcome.cached,
+      cacheAgeMs: outcome.ageMs,
+    },
+    text: value.text,
+  };
+}
+
+async function toolHealth(args) {
+  const current = settings();
+  const report = await checkPlatforms({
+    platforms: Array.isArray(args.platforms) ? args.platforms : [],
+    defaultPlatforms: current.defaultPlatforms,
+    query: typeof args.query === 'string' && args.query.trim() !== '' ? args.query : 'cordis',
+    timeoutMs: Math.min(20000, Math.max(2000, Number(args.timeoutMs) || 8000)),
+    deep: args.deep === true,
+    concurrency: Math.min(8, Math.max(1, Number(args.concurrency) || 4)),
+    proxy: current.proxy,
+    cookies: current.cookies,
+  });
+  return { payload: { ...report, text: undefined }, text: formatHealth(report) };
+}
+
 async function toolProviders() {
   const list = providerCatalog();
   const current = settings();
@@ -260,6 +344,43 @@ const TOOLS = [
       additionalProperties: false,
     },
     run: toolRead,
+  },
+  {
+    name: 'web_scout_evidence',
+    description:
+      'Search and return an EVIDENCE PACK: top items scored by relevance / freshness / native backend, each with a quoted excerpt, plus per-platform coverage and gaps. Cheaper on context than a raw result list.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Keywords; may be empty only for hot-list platforms.' },
+        platforms: { type: 'array', items: { type: 'string' }, description: 'Platform ids; omit for configured defaults.' },
+        budgetChars: { type: 'number', description: 'Character budget (800-20000, default 6000).' },
+        maxItems: { type: 'number', description: 'Max items (1-20, default 10).' },
+        perPlatform: { type: 'number', description: 'Max items per platform (1-8, default 3).' },
+        excerptChars: { type: 'number', description: 'Max excerpt length (80-600, default 240).' },
+        limit: { type: 'number', description: 'Raw results per platform (1-30).' },
+        pages: { type: 'number', description: 'Pages per backend (1-4).' },
+        refresh: { type: 'boolean', description: 'Bypass cache.' },
+      },
+      additionalProperties: false,
+    },
+    run: toolEvidence,
+  },
+  {
+    name: 'web_scout_health',
+    description: 'Probe native search backends now and report which ones actually work (ok / empty / blocked / login / error) with latency.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        platforms: { type: 'array', items: { type: 'string' }, description: 'Only check these ids; omit for all native backends.' },
+        query: { type: 'string', description: 'Probe keyword (default "cordis").' },
+        timeoutMs: { type: 'number', description: 'Per-platform timeout (2000-20000).' },
+        deep: { type: 'boolean', description: 'Also probe site: fallback platforms (slower).' },
+        concurrency: { type: 'number', description: 'Parallel probes (1-8, default 4).' },
+      },
+      additionalProperties: false,
+    },
+    run: toolHealth,
   },
   {
     name: 'web_scout_providers',

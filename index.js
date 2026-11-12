@@ -6,6 +6,10 @@ import {
   contextQuery,
   runSearch,
   readPage,
+  packEvidence,
+  formatEvidence,
+  checkPlatforms,
+  formatHealth,
   browserUrlFor,
   initProviders,
   providerCatalog,
@@ -455,6 +459,135 @@ export function apply(ctx, config = {}) {
       timeoutMs: current.timeoutMs,
       cookies: current.cookies || {},
     });
+      },
+    }),
+  );
+
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'web_scout_evidence',
+      description:
+        'Search and return an EVIDENCE PACK instead of a raw list: top items scored by relevance / freshness / native backend, each with a quoted excerpt, plus per-platform coverage and gaps. Use when you need citable material rather than 50 titles.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Keywords; may be empty only for hot-list platforms.' },
+          platforms: { type: 'array', items: { type: 'string' }, description: 'Platform ids; omit for configured defaults.' },
+          budgetChars: { type: 'number', description: 'Character budget for the pack (800-20000, default 6000).' },
+          maxItems: { type: 'number', description: 'Max items in the pack (1-20, default 10).' },
+          perPlatform: { type: 'number', description: 'Max items per platform (1-8, default 3).' },
+          excerptChars: { type: 'number', description: 'Max excerpt length per item (80-600, default 240).' },
+          limit: { type: 'number', description: 'Raw results per platform before packing (1-30).' },
+          pages: { type: 'number', description: 'Pages per backend (1-4).' },
+          refresh: { type: 'boolean', description: 'Bypass cache.' },
+        },
+        additionalProperties: false,
+      },
+      output: {
+        schema: JSON_OBJECT,
+        render: (_args, value) => blocks((value && value.text) || value),
+      },
+      presentCall: (args) => ({ card: 'generic', title: `生成证据包：${(args && (args.query || '(榜单)')) || '(榜单)'}`, kind: 'search', rawInput: args }),
+      presentResult: (_args, result) => {
+        const value = result && result.value ? result.value : {};
+        return {
+          card: 'web',
+          kind: 'search',
+          title: `${value.selected || 0} 条证据 · ${(value.coverage || []).length} 个平台 · ${value.usedChars || 0}/${value.budgetChars || 0} 字`,
+          sources: (value.items || []).slice(0, 8).map((item) => ({ url: item.url, title: item.title, snippet: item.excerpt })),
+          truncated: false,
+        };
+      },
+      execute: async (args, exec) => {
+        const options = args && typeof args === 'object' ? args : {};
+        const current = await settings();
+        const hint = transcript(ctx, exec);
+        const platforms = resolvePlatforms(
+          options.platforms && options.platforms.length > 0 ? options.platforms : ['auto'],
+          current.defaultPlatforms,
+          inferPlatforms(`${options.query || ''} ${conversationText(hint.messages).slice(-400)}`),
+        ).slice(0, current.maxPlatforms);
+        const feedOnly = platforms.length > 0 && platforms.every((id) => {
+          const def = PLATFORMS.get(id);
+          return Boolean(def && def.list === true);
+        });
+        let query = cleanQuery(options.query || '');
+        if (query === '' && hint.messages.length > 0 && !feedOnly) query = contextQuery(hint.messages, '');
+        if (query === '' && !feedOnly) throw new Error('缺少查询词：关键词检索必须给 query（榜单类平台可留空）');
+        const limit = Math.min(30, Math.max(1, Number(options.limit) || current.limit));
+        const pages = Math.min(4, Math.max(1, Number(options.pages) || current.pages || 3));
+        const packOptions = {
+          budgetChars: Math.min(20000, Math.max(800, Number(options.budgetChars) || 6000)),
+          maxItems: Math.min(20, Math.max(1, Number(options.maxItems) || 10)),
+          perPlatform: Math.min(8, Math.max(1, Number(options.perPlatform) || 3)),
+          excerptChars: Math.min(600, Math.max(80, Number(options.excerptChars) || 240)),
+        };
+        const cacheKey = ['tool-ev1', current.proxy || 'direct', query, platforms.join(','), limit, pages, JSON.stringify(packOptions)].join('::');
+        if (options.refresh !== true) {
+          const hit = cache.get(cacheKey);
+          if (hit) return { ...hit.value, cached: true, cacheAgeMs: hit.ageMs, sessionId: hint.id };
+        }
+        const result = await runSearch({
+          query,
+          platforms,
+          limit,
+          pages,
+          timeoutMs: current.timeoutMs,
+          proxy: current.proxy || '',
+          cookies: current.cookies || {},
+        });
+        const payload = packEvidence({ query: result.query, results: result.results, platforms: result.platforms, ...packOptions });
+        const data = {
+          ...payload,
+          text: formatEvidence(payload),
+          mode: result.mode,
+          tunnelSuggested: result.tunnelSuggested,
+          cached: false,
+          sessionId: hint.id,
+        };
+        cache.set(cacheKey, data, Math.min(86400000, Math.max(60000, Number(current.cacheTtlMs) || 21600000)));
+        return data;
+      },
+    }),
+  );
+
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'web_scout_health',
+      description:
+        'Probe every native search backend right now and report which ones actually work (ok / empty / blocked / login / error) with latency. Use it before blaming a query when results look thin.',
+      parameters: {
+        type: 'object',
+        properties: {
+          platforms: { type: 'array', items: { type: 'string' }, description: 'Only check these platform ids; omit for all native backends.' },
+          query: { type: 'string', description: 'Probe keyword (default "cordis").' },
+          timeoutMs: { type: 'number', description: 'Per-platform timeout (2000-20000).' },
+          deep: { type: 'boolean', description: 'Also probe site: fallback platforms (slower).' },
+        },
+        additionalProperties: false,
+      },
+      output: {
+        schema: JSON_OBJECT,
+        render: (_args, value) => blocks((value && value.text) || value),
+      },
+      presentCall: () => ({ card: 'generic', title: '体检搜索后端', kind: 'execute' }),
+      presentResult: (_args, result) => {
+        const value = result && result.value ? result.value : {};
+        return { card: 'generic', title: `连通性：${value.ok || 0}/${value.total || 0} 可用` };
+      },
+      execute: async (args) => {
+        const options = args && typeof args === 'object' ? args : {};
+        const current = await settings();
+        const report = await checkPlatforms({
+          platforms: Array.isArray(options.platforms) ? options.platforms : [],
+          defaultPlatforms: current.defaultPlatforms,
+          query: typeof options.query === 'string' && options.query.trim() !== '' ? options.query : 'cordis',
+          timeoutMs: Math.min(20000, Math.max(2000, Number(options.timeoutMs) || 8000)),
+          deep: options.deep === true,
+          proxy: current.proxy || '',
+          cookies: current.cookies || {},
+        });
+        return { ...report, text: formatHealth(report) };
       },
     }),
   );

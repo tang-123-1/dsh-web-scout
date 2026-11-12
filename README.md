@@ -53,7 +53,9 @@
 - **面板内直接播 B 站视频**（v1.9）：结果行出现「播放」→ 面板里展开嵌入式播放器（`player.bilibili.com`），不用跳浏览器。
 - **两级缓存**（v1.14）：内存 LRU + SQLite（`~/.dsh/web-scout-cache.db`），搜索与正文读取都缓存，命中时 `cached:true` 并给出缓存年龄；面板有「刷新」按钮与「缓存 Ns」徽标，`cacheTtlMs` 可配（60s–24h）。
 - **可插拔 Provider**（v1.15）：内置 46 个后端与外部 provider 走同一接口，把 `*.mjs` 丢进 `<profile>/web-scout-providers/` 就能加站，`provider.reload` 热加载，坏文件只丢自己。
-- **MCP 服务**（v1.16）：`node mcp/server.mjs` 起一个标准 MCP 服务（三个工具、协议 2025-06-18 / 2025-03-26 / 2024-11-05），Claude Desktop / Cursor / 自写脚本都能用；与面板共享配置、缓存与外部 provider。
+- **MCP 服务**（v1.16）：`node mcp/server.mjs` 起一个标准 MCP 服务（五个工具、协议 2025-06-18 / 2025-03-26 / 2024-11-05），Claude Desktop / Cursor / 自写脚本都能用；与面板共享配置、缓存与外部 provider。
+- **证据包**（v1.17）：不是把几十条结果原样丢给模型，而是按「标题命中 × 摘要命中 × 原排名 × 后端质量 × 新鲜度」打分，取前 N 条、每条给一段相关摘录，附平台覆盖与缺口，字符预算可配（默认 6000）。面板点「证据包」直接放进输入框，Agent 侧是 `web_scout_evidence`。
+- **连通性体检**（v1.17）：一键并发探活（原生后端真打一次），给出「可用 / 空结果 / 被拦 / 需登录 / 出错」与每站耗时；面板「站点」里点「体检」，每个平台前面出现状态点，Agent 侧是 `web_scout_health`。
 - **纯 Node 实现，零运行时依赖**：不用 `npm install`，HTTP/TLS/压缩/WebSocket 全部用 `node:http`、`node:tls`、`node:zlib`、全局 `WebSocket`。
 
 ## 安装
@@ -270,6 +272,8 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | `web_scout_search` | `query`（榜单类可空）、`platforms`、`limit`、`pages`、`timeoutMs`、`refresh` | `content[].text` 人读清单 + `structuredContent`（`query/platforms/results/cached/cacheAgeMs`） |
 | `web_scout_read` | `url`、`maxChars` | 标题、状态码、字数、是否截断、正文、缓存命中 |
 | `web_scout_providers` | 无 | 平台 / provider 清单、默认源、代理、缓存 TTL |
+| `web_scout_evidence` | `query`（榜单可空）、`platforms`、`budgetChars`、`maxItems`、`perPlatform`、`excerptChars`、`refresh` | 证据包：选中条目 + 摘录 + 覆盖面 + 缺口 + 纯文本 |
+| `web_scout_health` | `platforms`、`query`、`timeoutMs`、`deep` | 连通性体检：每站状态 / 耗时 / 可用性 + 汇总文本 |
 
 设计要点：
 
@@ -286,14 +290,51 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | `verify-mcp.mjs` | 握手/版本协商、tools/list、搜索、二次缓存命中、refresh、正文缓存、错误路径、榜单空 query | 24/24 |
 | `verify-mcp-robust.mjs` | 并发流水线 id 对齐、stdout 纯 JSON、批量数组、坏 JSON 后存活、stdin 关闭 exit 0、Content-Length 帧 | 10/10 |
 | `verify-mcp-tools.mjs` | 外部 provider 可搜、未知平台回落默认源、`timeoutMs` 钳位、不可达域名 isError | 7/7 |
+| `verify-evidence.mjs` | 去重、打分排序、每平台配额、预算、摘录命中、缺口、榜单空 query、新鲜度、体检跳过规则 | 19/19 |
+| `verify-evidence-live.mjs` | live 证据包预算/缓存/榜单、体检三站真打、未知平台 skipped | 15/15 |
+| `verify-mcp-117.mjs` | MCP 侧五个工具、证据包预算与缓存、体检、缺 query isError | 11/11 |
 
-### 三个工具（Agent 侧）
+### 证据包（v1.17）
+
+「搜到 90 条」和「模型能用」是两件事。证据包把结果压成一段可引用的材料：
+
+- 打分：`0.42 × 标题命中 + 0.22 × 摘要命中 + 0.16 × 原排名 + 0.12 × 后端质量 + 0.08 × 新鲜度`（原排名按名次线性衰减，后端质量按 原生接口 1 / 自定义 0.7 / 站内兜底 0.6 / 榜单 0.55）。
+- 配额与预算：每平台最多 `perPlatform` 条（默认 3），总字符预算 `budgetChars`（默认 6000，`usedChars` 会回传），超预算的进 `dropped.budget`。
+- 摘录：从正文/摘要里挑**含查询词**的那一句（切句后按 token 命中 + 中文 2-gram 覆盖打分），长度 `excerptChars`（默认 240）。
+- 缺口：`gaps` 说明哪些类型没覆盖到（比如没有视频类结果），`platformNotes` 记录各平台为什么没贡献。
+
+```jsonc
+// 面板：标题栏「证据包」→ 直接放进输入框；接口：
+{"op":"evidence","query":"cordis 插件","platforms":["csdn","v2ex"],"budgetChars":1500}
+```
+
+![证据包进入输入框](docs/panel-evidence.png)
+
+### 连通性体检（v1.17）
+
+站点会时不时被风控（360 人机验证、百度安全验证、B 站 -412），体检让你先看清哪条通道现在是通的：
+
+- 原生后端（provider / `def.backend` / 自定义站点）用小样本真打一次（`limit:2`），判 `ok` / `empty` / `blocked` / `login` / `error`，并记耗时。
+- 纯 `site:` 兜底平台默认跳过（`skipped: site-fallback`），加 `deep:true` 才真去打搜索引擎；不存在的 id 记 `skipped: unknown`。
+- 并发默认 4，`timeoutMs` 默认 8000；返回 `tally` 汇总与 `text` 人读版本。
+
+```jsonc
+{"op":"health.check","platforms":["csdn","v2ex","bing"],"timeoutMs":9000}
+```
+
+面板里：站点分区 → 「体检」→ 每个平台前面出现状态点（绿=可用，黄=空/被拦/需登录，红=出错），悬停看耗时与原因。
+
+![体检状态点](docs/panel-health.png)
+
+### 五个工具（Agent 侧）
 
 | 工具 | 参数 | 用途 |
 | --- | --- | --- |
 | `web_scout_search` | `query?` `platforms?` `limit?` `pages?` `timeoutMs?` `context?` `open?` | 检索；`query` 省略时按对话内容推断 |
 | `web_scout_open` | `url?` `platform?` `query?` | 用系统浏览器打开结果或该站的搜索页 |
 | `web_scout_read` | `url` `maxChars?` | 抓正文（返回标题、正文、状态码、页内链接） |
+| `web_scout_evidence` | `query?` `platforms?` `budgetChars?` `maxItems?` `perPlatform?` `excerptChars?` `limit?` `pages?` `refresh?` | 证据包：评分摘录 + 覆盖面 + 缺口，直接喂模型 |
+| `web_scout_health` | `platforms?` `query?` `timeoutMs?` `deep?` | 连通性体检：哪些站现在能用、哪些被拦/需登录 |
 
 ### HTTP 接口
 

@@ -2,6 +2,34 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
+## 1.17.0
+
+路线图第 2 层「读取与证据」+ 第 4 层「连通性一键测试」的一部分：把结果变成可引用的材料，并让「哪条通道现在能用」先看清楚。
+
+### 新增
+
+- **证据包**（`engines.js` 的 `packEvidence` / `formatEvidence` / `searchEvidence`）：
+  - 打分 `0.42×标题命中 + 0.22×摘要命中 + 0.16×原排名 + 0.12×后端质量 + 0.08×新鲜度`；同分按原顺序稳定排序。
+  - 每平台配额（默认 3）+ 字符预算（默认 6000），超出进 `dropped.perPlatform` / `dropped.budget`，重复进 `dropped.duplicates`。
+  - 摘录挑含查询词的句子（切句 + token/2-gram 命中），`excerptChars` 默认 240。
+  - 产出 `items[]`（含 `score`/`excerpt`/`why`/`thumb`/`embed`）、`coverage[]`、`gaps[]`、`platformNotes`。
+- **连通性体检**（`checkPlatforms` / `formatHealth`）：原生通道真打一次（`limit:2`），返回 `ok/empty/blocked/login/error` 与耗时；纯 `site:` 平台默认 `skipped`，`deep:true` 才真打；未知 id 记 `skipped.unknown`。
+- **接口**：`POST /web-scout/api {"op":"evidence"}`（与 `search` 同样的 query/platform 推导，缓存键含预算与摘录参数）与 `{"op":"health.check"}`。
+- **Agent 工具**：`web_scout_evidence`、`web_scout_health`（共 5 个工具）。
+- **MCP 工具**：`web_scout_evidence`、`web_scout_health`（共 5 个工具）。
+- **面板**：标题栏「证据包」把结果压成证据包直接放进输入框；站点分区「体检」按钮 + 每个平台前的状态点（绿/黄/红）与汇总行。
+
+### 测试
+
+- `verify-evidence.mjs` 19/19（去重、排序、配额、预算、摘录、缺口、榜单空 query、新鲜度、跳过规则）。
+- `verify-evidence-live.mjs` 15/15（live 预算/缓存/榜单、体检三站真打、未知平台 skipped）。
+- `verify-mcp-117.mjs` 11/11；回归 `verify-mcp.mjs` 24/24、`verify-mcp-robust.mjs` 10/10、`verify-mcp-tools.mjs` 7/7。
+
+### 修的
+
+- `refresh` 清缓存原先走 `cache.set(key, null, 1)`，会让下一次读取拿到 `null`；改为 `ScoutCache.forget(key)`。
+- `checkPlatforms` 显式传入不存在的平台原先被静默忽略，现在进 `skipped[{reason:"unknown"}]`。
+
 ## 1.16.0 — 2026-11-13
 
 **为什么改**：路线图第 3 步。插件的能力此前只对 DSH 内部可见（三个 agent 工具 + 面板 HTTP op）；要让别的宿主（Claude Desktop、Cursor、自己的脚本）也能用同一套检索，必须走标准协议。

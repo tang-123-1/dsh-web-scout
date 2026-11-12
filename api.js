@@ -9,6 +9,10 @@ import {
   browserUrlFor,
   registerCustomPlatforms,
   customPlatformId,
+  packEvidence,
+  formatEvidence,
+  checkPlatforms,
+  formatHealth,
   PLATFORMS,
 } from './engines.js';
 import { openInBrowser } from './open.js';
@@ -103,6 +107,19 @@ function cacheKeyFor(settings, parts) {
 
 function searchCacheKey(settings, query, platforms, limit, pages) {
   return cacheKeyFor(settings, ['search', query.trim().toLowerCase(), platforms.join(','), String(limit), String(pages)]);
+}
+
+function evidenceCacheKey(settings, query, platforms, pack) {
+  return [
+    'ev1',
+    settings.proxy || 'direct',
+    query,
+    platforms.join(','),
+    pack.budgetChars,
+    pack.maxItems,
+    pack.perPlatform,
+    pack.excerptChars,
+  ].join('::');
 }
 
 function readCacheKey(url) {
@@ -277,6 +294,84 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         const page = await readPage({ url, proxy, maxChars, timeoutMs: settings.timeoutMs });
         cache.set(key, page, ttlFrom(settings));
         return { ...page, cached: false };
+      }
+      case 'evidence': {
+        const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : '';
+        let messages = [];
+        if (sessionId !== '' && typeof readMessages === 'function') {
+          try {
+            messages = readMessages(sessionId) || [];
+          } catch {
+            messages = [];
+          }
+        }
+        const context = typeof payload.context === 'string' ? payload.context : '';
+        const hinted = inferPlatforms(`${payload.query || ''} ${context} ${messages.slice(-6).map(messageText).join(' ').slice(-600)}`);
+        const platforms = resolvePlatforms(
+          payload.platforms && payload.platforms.length > 0 ? payload.platforms : ['auto'],
+          settings.defaultPlatforms,
+          hinted,
+        ).slice(0, settings.maxPlatforms);
+        const feedOnly = platforms.length > 0 && platforms.every((id) => {
+          const def = PLATFORMS.get(id);
+          return Boolean(def && def.list === true);
+        });
+        let query = cleanQuery(payload.query || '');
+        if (query === '' && messages.length > 0 && !feedOnly) query = contextQuery(messages, context);
+        if (query === '' && context !== '' && !feedOnly) query = cleanQuery(context).split(/\s+/).slice(0, 12).join(' ');
+        if (query === '' && !feedOnly) throw new Error('缺少查询词');
+        const limit = Math.min(30, Math.max(1, Number(payload.limit) || settings.limit));
+        const pages = Math.min(4, Math.max(1, Number(payload.pages) || Number(settings.pages) || 3));
+        const timeoutMs = Math.min(30000, Math.max(3000, Number(payload.timeoutMs) || settings.timeoutMs));
+        const packOptions = {
+          budgetChars: Math.min(20000, Math.max(800, Number(payload.budgetChars) || 6000)),
+          maxItems: Math.min(20, Math.max(1, Number(payload.maxItems) || 10)),
+          perPlatform: Math.min(8, Math.max(1, Number(payload.perPlatform) || 3)),
+          excerptChars: Math.min(600, Math.max(80, Number(payload.excerptChars) || 240)),
+        };
+        const key = evidenceCacheKey(settings, query, platforms, packOptions);
+        const cached = payload.refresh === true ? undefined : cache.get(key);
+        if (cached !== undefined) {
+          return { ...cached.value, cached: true, cacheAgeMs: cached.ageMs, cacheSource: cached.source };
+        }
+        const result = await runSearch({ query, platforms, limit, pages, timeoutMs, proxy, cookies: settings.cookies || {} });
+        const packed = packEvidence({
+          query: result.query,
+          results: result.results,
+          platforms: result.platforms,
+          ...packOptions,
+        });
+        const data = {
+          ...packed,
+          text: formatEvidence(packed),
+          tunnelSuggested: result.tunnelSuggested,
+          mode: result.mode,
+          sessionId,
+          cached: false,
+        };
+        cache.set(key, data, ttlFrom(settings));
+        store.record({
+          at: new Date().toISOString(),
+          query: result.query,
+          platforms: platforms,
+          count: packed.selected,
+          top: packed.items.slice(0, 3).map((item) => ({ title: item.title, url: item.url })),
+          origin: 'evidence',
+        });
+        return data;
+      }
+      case 'health.check': {
+        const report = await checkPlatforms({
+          platforms: Array.isArray(payload.platforms) ? payload.platforms : [],
+          defaultPlatforms: settings.defaultPlatforms,
+          query: typeof payload.query === 'string' && payload.query.trim() !== '' ? payload.query : 'cordis',
+          timeoutMs: Math.min(20000, Math.max(2000, Number(payload.timeoutMs) || 8000)),
+          deep: payload.deep === true,
+          concurrency: Math.min(8, Math.max(1, Number(payload.concurrency) || 4)),
+          proxy,
+          cookies: settings.cookies || {},
+        });
+        return { ...report, text: formatHealth(report) };
       }
       case 'config': {
         return store.patch(payload.patch || {});

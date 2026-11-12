@@ -22,6 +22,13 @@ window.__ModuleLoader__.load({
         toChat: '加入对话',
         chatAdded: '已加入输入框，回车即可发送',
         chatFailed: '输入框正忙，稍后再试',
+        evidence: '证据包',
+        evidenceHint: '把当前结果压成带摘录与缺口的证据包，放进输入框',
+        evidenceAdded: '证据包已放进输入框，回车即可发送',
+        evidenceBusy: '整理中…',
+        healthRun: '体检',
+        healthBusy: '体检中…',
+        healthTally: '体检：可用 {ok} · 空 {empty} · 被拦 {blocked} · 需登录 {login} · 出错 {error}',
         shellTag: '中转',
         cacheTag: '缓存',
         cacheHint: '结果来自本地缓存（内存 LRU + SQLite），没有重新联网；要最新数据点「刷新」',
@@ -105,6 +112,13 @@ window.__ModuleLoader__.load({
         toChat: 'To chat',
         chatAdded: 'Added to the composer — press Enter to send',
         chatFailed: 'Composer is busy, try again',
+        evidence: 'Evidence',
+        evidenceHint: 'Compress the current results into an evidence pack with excerpts and gaps',
+        evidenceAdded: 'Evidence pack added to the composer — press Enter to send',
+        evidenceBusy: 'Packing…',
+        healthRun: 'Check',
+        healthBusy: 'Checking…',
+        healthTally: 'Health: ok {ok} · empty {empty} · blocked {blocked} · login {login} · error {error}',
         shellTag: 'Redirect',
         cacheTag: 'cached',
         cacheHint: 'Served from the local cache (LRU + SQLite) without going online; hit Refresh for fresh data',
@@ -378,6 +392,8 @@ window.__ModuleLoader__.load({
       caretOpen: { transform: 'rotate(90deg)' },
       dotOk: { width: '6px', height: '6px', borderRadius: '50%', background: C.ok, display: 'inline-block' },
       dotOff: { width: '6px', height: '6px', borderRadius: '50%', background: C.line2, display: 'inline-block' },
+      dotWait: { width: '6px', height: '6px', borderRadius: '50%', background: C.warn, display: 'inline-block' },
+      dotBad: { width: '6px', height: '6px', borderRadius: '50%', background: C.bad, display: 'inline-block' },
       button: {
         border: `1px solid ${C.line}`,
         outline: 'none',
@@ -734,6 +750,9 @@ function statusStyle(status) {
       const [form, setForm] = React.useState({ name: '', url: '', site: '', kind: 'auto' });
   const [playing, setPlaying] = React.useState('');
   const [chatNote, setChatNote] = React.useState('');
+  const [evidenceBusy, setEvidenceBusy] = React.useState(false);
+  const [health, setHealth] = React.useState(null);
+  const [healthBusy, setHealthBusy] = React.useState(false);
       const [view, setView] = React.useState(() => {
         try {
           return window.localStorage.getItem('web-scout-view') === 'compact' ? 'compact' : 'card';
@@ -1144,6 +1163,66 @@ function statusStyle(status) {
     setChatNote(mode ? t('chatAdded') : t('chatFailed'));
     if (mode) window.setTimeout(() => setChatNote(''), 4000);
   };
+  const healthOf = (id) => (health && health[id]) || null;
+  const healthDotStyle = (status) => {
+    if (status === 'ok') return S.dotOk;
+    if (status === 'error') return S.dotBad;
+    if (status === 'empty' || status === 'blocked' || status === 'login') return S.dotWait;
+    return S.dotOff;
+  };
+  const healthSummary = () => {
+    if (!health) return '';
+    const tally = { ok: 0, empty: 0, blocked: 0, login: 0, error: 0 };
+    for (const key of Object.keys(health)) {
+      const status = health[key] && health[key].status;
+      if (Object.prototype.hasOwnProperty.call(tally, status)) tally[status] += 1;
+    }
+    return fill(t('healthTally'), tally);
+  };
+  const toEvidence = async () => {
+    if (evidenceBusy) return;
+    setEvidenceBusy(true);
+    const say = (message) => {
+      setChatNote(message);
+      window.setTimeout(() => setChatNote(''), 4000);
+    };
+    try {
+      const result = await post('evidence', {
+        query: (data && data.query) || '',
+        platforms: selected,
+        sessionId: props.sessionId,
+      });
+      const body = result && typeof result.text === 'string' ? result.text : '';
+      if (!body) {
+        say(t('chatFailed'));
+        return;
+      }
+      const mode = insertToComposer(body);
+      say(mode ? t('evidenceAdded') : t('chatFailed'));
+    } catch (error) {
+      say(String((error && error.message) || error));
+    } finally {
+      setEvidenceBusy(false);
+    }
+  };
+  const runHealth = async (ids) => {
+    if (healthBusy) return;
+    setHealthBusy(true);
+    try {
+      const report = await post('health.check', {
+        platforms: Array.isArray(ids) && ids.length > 0 ? ids : chips,
+        timeoutMs: 9000,
+        concurrency: 4,
+      });
+      const map = {};
+      for (const item of (report && report.items) || []) map[item.id] = item;
+      setHealth(map);
+    } catch {
+      setHealth({});
+    } finally {
+      setHealthBusy(false);
+    }
+  };
 
   const openUrl = async (url) => {
         setError('');
@@ -1227,6 +1306,19 @@ function statusStyle(status) {
                       onClick: () => toChat(seenRows.slice(0, 8)),
                     },
                     t('toChat'),
+                  )
+                : null,
+              rows.length > 0
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      title: t('evidenceHint'),
+                      disabled: evidenceBusy,
+                      style: merge(S.viewBtn, { marginRight: '2px', color: C.ok }),
+                      onClick: toEvidence,
+                    },
+                    evidenceBusy ? t('evidenceBusy') : t('evidence'),
                   )
                 : null,
               h(
@@ -1345,7 +1437,22 @@ function statusStyle(status) {
               ? h(
                   'div',
                   { style: S.block },
-                  h('div', { style: S.blockTitle }, t('picker')),
+                  h(
+                    'div',
+                    { style: merge(S.blockTitle, { display: 'flex', alignItems: 'center', gap: '8px' }) },
+                    t('picker'),
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        style: S.miniAction,
+                        title: t('healthRun'),
+                        onClick: () => runHealth(chips),
+                      },
+                      healthBusy ? t('healthBusy') : t('healthRun'),
+                    ),
+                    health ? h('span', { style: merge(S.rowNote, { flex: '1' }) }, healthSummary()) : null,
+                  ),
                   h(
                     'div',
                     { style: S.grid },
@@ -1355,14 +1462,21 @@ function statusStyle(status) {
                         {
                           key: item.id,
                           type: 'button',
-                          title: item.backend || '',
+                          title: healthOf(item.id)
+                            ? `${item.backend || ''} · ${healthOf(item.id).status} · ${healthOf(item.id).ms || 0}ms${healthOf(item.id).note ? ` · ${healthOf(item.id).note}` : ''}`
+                            : item.backend || '',
                           style: merge(S.mini, chips.includes(item.id) ? S.miniOn : null),
                           onClick: (event) => {
                             toggleChip(item.id);
                             blurOnClick(event);
                           },
                         },
-                        item.label || item.id,
+                        healthOf(item.id)
+                          ? [
+                              h('span', { key: 'dot', style: merge(healthDotStyle(healthOf(item.id).status), { marginRight: '5px' }) }),
+                              item.label || item.id,
+                            ]
+                          : item.label || item.id,
                       ),
                     ),
                   ),
