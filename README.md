@@ -1,62 +1,38 @@
 # web-scout · DeepSeek Harness 联网检索插件
 
-> 按对话内容自动联网检索，47 个平台后端，站内搜索、登录态复用、缓存、可拖动缩放的结果面板，并可作为 MCP 服务被任意宿主调用。
-> A conversation-aware web search plugin for [DeepSeek Harness](https://github.com/deepseek-ai) (Cordis bundle). 47 platform backends, native in-site search, cookie-based login reuse, a two-level cache, a draggable/resizable result panel — and an MCP server for any host.
+> 对话里说的东西，插件替你去搜：46 个平台、8 个免关键词热榜、证据包、研究模式，还能当 MCP 服务用。
+> Search the web from your chat: 46 platform backends, hot lists, evidence packs, research mode, and an MCP server.
 
 ![许可证](https://img.shields.io/badge/license-MIT-blue.svg)
-![版本](https://img.shields.io/badge/version-1.16.0-informational.svg)
+![版本](https://img.shields.io/badge/version-1.22.0-informational.svg)
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)
+![平台](https://img.shields.io/badge/platforms-46-informational.svg)
 
----
+## 它能做什么
 
-## 这是什么
+- **挂件**：输入框下方多一个「联网检索」，点开面板搜；留空就用当前对话当查询。
+- **给 Agent 的 6 个工具**：`web_scout_search` / `_open` / `_read` / `_evidence` / `_research` / `_health`。
+- **HTTP**：`POST /web-scout/api`，本地脚本直接调。
+- **MCP**：`node mcp/server.mjs`，Claude Desktop / Cursor 可用。
 
-一个 DSH（DeepSeek Harness）插件。装好之后：
+零 API Key、零运行时依赖（纯 Node，Node ≥ 22）。
 
-1. **输入框下方多一个「联网检索」挂件**：点开面板，输入关键词或直接留空（留空就用当前对话内容当查询），搜完在面板里看结果。
-2. **给 Agent 三个工具**：`web_scout_search`（搜）、`web_scout_open`（在系统浏览器打开）、`web_scout_read`（读网页正文）。模型在对话里会自己调用它们。
-3. **一个 HTTP 接口**：`POST /web-scout/api`，把检索能力暴露给任何本地脚本。
-
-不需要 API Key，不依赖任何第三方搜索服务的付费额度：能直连的就直连（必应、360、CSDN、掘金、今日头条、V2EX、哔哩哔哩、微信…），拿不到接口的站点走 `site:` 检索兜底，并在末尾给一条「站内搜索入口」。
-
-| 面板：结果与平台状态 | 不可达站点给浏览器入口 |
+| 检索结果与平台状态 | 热榜（不用输关键词） |
 | --- | --- |
-| ![结果与平台状态](docs/panel-results.png) | ![不可达](docs/panel-blocked.png) |
+| ![结果](docs/panel-results.png) | ![热榜](docs/panel-hot.png) |
 
-| 站点与登录（可收放分区） | 站内后端（今日头条 / V2EX） |
-| --- | --- |
-| ![站点](docs/panel-sites.png) | ![站内后端](docs/panel-insite.png) |
+## 功能速览
 
-| 一次 90 条（v1.6 多页抓取） | 芯片选中态（实心白胶囊） |
-| --- | --- |
-| ![多条结果](docs/panel-more.png) | ![芯片](docs/panel-chips.png) |
+- **46 个平台**：直连接口、`site:` 兜底、8 个热榜/信息流、自定义站点（填名称/域名/搜索地址即可）。
+- **多页抓取**：`limit ≤30 × pages ≤4 × maxPlatforms ≤14`，默认 12×3×10，一次 70–90 条。
+- **干净结果**：中文 2-gram 相关性过滤、跨源去重（剥 `utm_*`/`spm`/`from`）、落地页过滤、中转壳标「中转」。
+- **登录态**：插件自带独立 profile 的浏览器，CDP 读 cookie；搜索与读正文都带你自己的登录态。
+- **面板**：可拖动可缩放、十类卡片、B 站内嵌播放、缓存徽标与「刷新」。
+- **缓存**：内存 LRU + SQLite（`~/.dsh/web-scout-cache.db`），`cacheTtlMs` 可配。
+- **证据包 / 研究模式**：打分取前 N 条 + 摘录 + 覆盖与缺口；多轮检索带时间预算与质量门槛。
+- **可插拔**：外部 provider 丢进 `<profile>/web-scout-providers/` 即生效，热加载。
 
-| 登录与账号（7 个按钮） | 抖音热榜（无需关键词） |
-| --- | --- |
-| ![登录](docs/panel-login.png) | ![热榜](docs/panel-hot.png) |
-
-| 五个热搜榜单（微博 / B站 / 知乎 / 百度 / 头条，v1.8） | |
-| --- | --- |
-| ![热搜榜单](docs/panel-hot-lists.png) | |
-
-## 功能
-
-- **46 个平台**：4 类后端——直连接口（JSON/HTML 解析）、`site:` 站内检索（必应 + 360 双引擎，带域名校验）、榜单/信息流（抖音热榜、微博热搜、B站热门、知乎热榜、百度热搜、头条热榜、知乎推荐、知乎关注，共 8 个，不需要关键词）、自定义站点。
-- **多页抓取**：`limit`（每源条数，≤30）× `pages`（每源页数，≤4）× `maxPlatforms`（同时跑几个源，≤14）。默认 `12 × 3 × 10`，实测「龙珠」一次 70–90 条，`20 × 4` 可到 103–121 条。
-- **相关性过滤**：标题和摘要都不含关键词的结果直接丢掉（修掉 B 站搜「龙珠」返回「赵云-飞龙神将」这类“猜词”噪音），过滤后为空会走一次 `site:` 兜底。
-- **落地页过滤**：站点类平台不再把首页/频道页（`/`、`/hot`、`/search`、`/topic`）当结果返回。
-- **跨源去重**：`utm_*`、`spm`、`from`、`ref` 等追踪参数会被剥掉再比对，同一篇文章不会在必应和知乎各出现一次。
-- **对话感知**：留空查询时，从最近的对话里提取用户意图（自动跳过系统注入的噪音行），并识别「在B站和知乎搜一下」这种平台指名。
-- **登录态复用**：插件自带一个独立 profile 的浏览器（`--user-data-dir`），你在里面登录一次，插件通过 CDP 读 cookie，之后搜索和读网页都带着你的登录态；也支持从 Edge/Chrome/Firefox 导入、手动粘贴。
-- **面板可拖动、可缩放**，位置记在 `localStorage['web-scout-panel-rect']`；`打开` 交给系统默认浏览器。
-- **按站点类型出卡片**（v1.9）：视频 / 文章 / 问答 / 论坛 / 榜单 / 商品 / 代码 / 文档 / 动态 / 网页十类，卡片带类型标签与缩略图；自定义站点按填写的类型或域名自动套用。
-- **面板内直接播 B 站视频**（v1.9）：结果行出现「播放」→ 面板里展开嵌入式播放器（`player.bilibili.com`），不用跳浏览器。
-- **两级缓存**（v1.14）：内存 LRU + SQLite（`~/.dsh/web-scout-cache.db`），搜索与正文读取都缓存，命中时 `cached:true` 并给出缓存年龄；面板有「刷新」按钮与「缓存 Ns」徽标，`cacheTtlMs` 可配（60s–24h）。
-- **可插拔 Provider**（v1.15）：内置 46 个后端与外部 provider 走同一接口，把 `*.mjs` 丢进 `<profile>/web-scout-providers/` 就能加站，`provider.reload` 热加载，坏文件只丢自己。
-- **MCP 服务**（v1.16）：`node mcp/server.mjs` 起一个标准 MCP 服务（五个工具、协议 2025-06-18 / 2025-03-26 / 2024-11-05），Claude Desktop / Cursor / 自写脚本都能用；与面板共享配置、缓存与外部 provider。
-- **证据包**（v1.17）：不是把几十条结果原样丢给模型，而是按「标题命中 × 摘要命中 × 原排名 × 后端质量 × 新鲜度」打分，取前 N 条、每条给一段相关摘录，附平台覆盖与缺口，字符预算可配（默认 6000）。面板点「证据包」直接放进输入框，Agent 侧是 `web_scout_evidence`。
-- **连通性体检**（v1.17）：一键并发探活（原生后端真打一次），给出「可用 / 空结果 / 被拦 / 需登录 / 出错」与每站耗时；面板「站点」里点「体检」，每个平台前面出现状态点，Agent 侧是 `web_scout_health`。
-- **纯 Node 实现，零运行时依赖**：不用 `npm install`，HTTP/TLS/压缩/WebSocket 全部用 `node:http`、`node:tls`、`node:zlib`、全局 `WebSocket`。
+更细的改动看 [CHANGELOG.md](CHANGELOG.md)，接口与字段看下面各节。
 
 ## 安装
 
