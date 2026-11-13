@@ -226,7 +226,7 @@ export const PLATFORM_LIST = [
   { id: 'csdn', zh: 'CSDN', en: 'CSDN', group: 'cn', backend: 'csdn', browser: (q) => `https://so.csdn.net/so/search?q=${enc(q)}` },
   { id: 'juejin', zh: '掘金', en: 'Juejin', group: 'cn', backend: 'juejin', browser: (q) => `https://juejin.cn/search?query=${enc(q)}` },
   { id: 'cnblogs', zh: '博客园', en: 'Cnblogs', group: 'cn', site: 'cnblogs.com', browser: (q) => `https://zzk.cnblogs.com/s?w=${enc(q)}` },
-  { id: 'segmentfault', zh: '思否', en: 'SegmentFault', group: 'cn', site: 'segmentfault.com', browser: (q) => `https://segmentfault.com/search?q=${enc(q)}` },
+  { id: 'segmentfault', zh: '思否', en: 'SegmentFault', group: 'cn', backend: 'segmentfault', site: 'segmentfault.com', browser: (q) => `https://segmentfault.com/search?q=${enc(q)}` },
   { id: 'oschina', zh: '开源中国', en: 'OSChina', group: 'cn', site: 'oschina.net', browser: (q) => `https://www.oschina.net/search?scope=all&q=${enc(q)}` },
   { id: 'gitee', zh: 'Gitee', en: 'Gitee', group: 'cn', site: 'gitee.com', browser: (q) => `https://search.gitee.com/?skin=rec&type=repository&q=${enc(q)}` },
   { id: 'bilibili', zh: '哔哩哔哩', en: 'Bilibili', group: 'video', backend: 'bilibili', site: 'bilibili.com', browser: (q) => `https://search.bilibili.com/all?keyword=${enc(q)}` },
@@ -250,7 +250,7 @@ export const PLATFORM_LIST = [
   { id: 'stackoverflow', zh: 'Stack Overflow', en: 'Stack Overflow', group: 'dev', backend: 'stackexchange', browser: (q) => `https://stackoverflow.com/search?q=${enc(q)}`, needsTunnel: true },
   { id: 'npm', zh: 'npm', en: 'npm', group: 'dev', backend: 'npm', browser: (q) => `https://www.npmjs.com/search?q=${enc(q)}` },
   { id: 'hackernews', zh: 'Hacker News', en: 'Hacker News', group: 'dev', backend: 'hackernews', browser: (q) => `https://hn.algolia.com/?q=${enc(q)}`, needsTunnel: true },
-  { id: 'mdn', zh: 'MDN 文档', en: 'MDN', group: 'dev', site: 'developer.mozilla.org', browser: (q) => `https://developer.mozilla.org/zh-CN/search?q=${enc(q)}` },
+  { id: 'mdn', zh: 'MDN 文档', en: 'MDN', group: 'dev', backend: 'mdn', site: 'developer.mozilla.org', browser: (q) => `https://developer.mozilla.org/zh-CN/search?q=${enc(q)}` },
   { id: 'pypi', zh: 'PyPI', en: 'PyPI', group: 'dev', site: 'pypi.org', browser: (q) => `https://pypi.org/search/?q=${enc(q)}`, needsTunnel: true },
   { id: 'wikipedia', zh: '维基百科', en: 'Wikipedia', group: 'dev', backend: 'wikipedia', browser: (q) => `https://zh.wikipedia.org/w/index.php?search=${enc(q)}`, needsTunnel: true },
 
@@ -259,7 +259,7 @@ export const PLATFORM_LIST = [
   { id: '1688', zh: '1688', en: '1688', group: 'shop', site: '1688.com', browser: (q) => `https://s.1688.com/selloffer/offer_search.htm?keywords=${enc(q)}` },
   { id: 'amazon', zh: '亚马逊', en: 'Amazon', group: 'shop', site: 'amazon.com', browser: (q) => `https://www.amazon.com/s?k=${enc(q)}`, needsTunnel: true },
   { id: 'xianyu', zh: '闲鱼', en: 'Xianyu', group: 'shop', site: 'goofish.com', browser: (q) => `https://www.goofish.com/search?q=${enc(q)}` },
-  { id: 'douban', zh: '豆瓣', en: 'Douban', group: 'content', site: 'douban.com', browser: (q) => `https://www.douban.com/search?q=${enc(q)}` },
+  { id: 'douban', zh: '豆瓣', en: 'Douban', group: 'content', backend: 'douban', site: 'douban.com', browser: (q) => `https://www.douban.com/search?q=${enc(q)}` },
   { id: 'sspai', zh: '少数派', en: 'SSPAI', group: 'content', site: 'sspai.com', browser: (q) => `https://sspai.com/search/post/${enc(q)}` },
   { id: 'medium', zh: 'Medium', en: 'Medium', group: 'content', site: 'medium.com', browser: (q) => `https://medium.com/search?q=${enc(q)}`, needsTunnel: true },
 ];
@@ -862,10 +862,45 @@ backends.baidu = async (ctx) => {
   return out;
 };
 
+// m.so.com 的移动版结构：<div class="... res-list ..."> + <a class=alink href="https://m.so.com/jump?u=<编码真地址>&m=..">
+// + <h3 class="res-title">标题</h3> + <div class="summary">摘要</div>。桌面版被验证码挡住时用它。
+function parseSo360Mobile(text, limit) {
+  const out = [];
+  const blocks = text.split(/<div[^>]*class="[^"]*\bres-list\b/).slice(1);
+  for (const chunk of blocks) {
+    const titleMatch = /<h3[^>]*class="[^"]*\bres-title\b[^"]*"[^>]*>([\s\S]*?)<\/h3>/i.exec(chunk);
+    const hrefMatch = /href="(https?:\/\/m\.so\.com\/jump\?[^"]+)"/i.exec(chunk);
+    if (!titleMatch || !hrefMatch) continue;
+    const title = stripTags(titleMatch[1]);
+    if (title === '') continue;
+    let url = '';
+    try {
+      const parsed = new URL(decodeEntities(hrefMatch[1]));
+      url = parsed.searchParams.get('u') || '';
+    } catch {
+      url = '';
+    }
+    if (!/^https?:\/\//i.test(url)) continue;
+    if (isRedirectorUrl(url)) continue;
+    const mobileHost = hostOf(url);
+    // 360 会在结果流里插自己的推荐/追问（m.so.com/s?q=…&src=own_recommend_top、猜您关注），一律丢掉。
+    if (mobileHost === 'so.com' || mobileHost.endsWith('.so.com')) continue;
+    const summaryMatch = /<div[^>]*class="[^"]*\bsummary\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i.exec(chunk);
+    out.push({ title, url, snippet: summaryMatch ? htmlToText(summaryMatch[1], { scoped: true }).slice(0, 300) : '' });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 backends.so360 = async (ctx) => {
   const { client, query, limit, timeoutMs, page = 1 } = ctx;
   const res = await client.request(`https://www.so.com/s?q=${enc(query)}&pn=${page}&rn=${Math.min(30, limit * 2)}`, { timeoutMs });
-  if (/请输入验证码|antispider|captcha/i.test(res.text) && !/res-list/.test(res.text)) {
+  const captcha = /请输入验证码|antispider|captcha/i.test(res.text) && !/res-list/.test(res.text);
+  if (captcha) {
+    // 桌面版按 IP 丢验证码是常态，换移动版顶上（实测同一个 IP 下移动版仍可用）。
+    const mobile = await client.request(`https://m.so.com/s?q=${enc(query)}`, { timeoutMs });
+    const mobileRows = parseSo360Mobile(mobile.text, Math.min(30, limit * 2));
+    if (mobileRows.length > 0) return mobileRows;
     throw new EngineBlocked('so.com captcha', { browser: `https://www.so.com/s?q=${enc(query)}` });
   }
   const out = [];
@@ -994,12 +1029,96 @@ backends.stackexchange = async (ctx) => {
   return items;
 };
 
-backends.npm = async (ctx) => {
+// registry.npmjs.org 在部分网络下不可达（实测超时），npmmirror 是同一份 v1 搜索协议，直接顶上。
+const NPM_REGISTRIES = ['https://registry.npmjs.org', 'https://registry.npmmirror.com'];
+
+// 豆瓣的联想接口免登录、返回 JSON（title/url/year/type/img），比搜索页面（JS 渲染 + 登录墙）可用。
+backends.douban = async (ctx) => {
+  const { client, query, limit, timeoutMs } = ctx;
+  const { data } = await client.json(`https://movie.douban.com/j/subject_suggest?q=${enc(query)}`, { timeoutMs });
+  const rows = Array.isArray(data) ? data : [];
+  return rows.slice(0, Math.max(limit, 10)).map((row) => ({
+    title: row.title || '',
+    url: row.url || '',
+    snippet: [row.sub_title, row.year, row.type].filter(Boolean).join(' · ').slice(0, 200),
+    thumb: row.img ? String(row.img).replace(/^http:/, 'https:') : '',
+    extra: { type: row.type, year: row.year },
+  })).filter((row) => row.url !== '');
+};
+
+// 思否的搜索页是服务端渲染的（<a href="/a/<id>"><h5>标题</h5>），站内检索可靠；site: 兜底在必应上已失效。
+backends.segmentfault = async (ctx) => {
+  const { client, query, limit, timeoutMs } = ctx;
+  const res = await client.request(`https://segmentfault.com/search?q=${enc(query)}`, {
+    headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
+    timeoutMs,
+  });
+  const out = [];
+  const seen = new Set();
+  const pattern = /<a[^>]+href="(\/(?:a|q)\/\d+[^"]*)"[^>]*>([\s\S]{0,400}?)<\/a>/gi;
+  let match;
+  while ((match = pattern.exec(res.text)) !== null) {
+    const href = match[1];
+    if (seen.has(href)) continue;
+    const title = stripTags(match[2]);
+    if (title === '' || title.length < 4) continue;
+    seen.add(href);
+    out.push({
+      title,
+      url: `https://segmentfault.com${href}`,
+      snippet: '',
+    });
+    if (out.length >= Math.max(limit, 8)) break;
+  }
+  if (out.length === 0 && /验证|security check/i.test(res.text)) {
+    throw new EngineBlocked('segmentfault blocked', { browser: `https://segmentfault.com/search?q=${enc(query)}` });
+  }
+  return out;
+};
+
+// MDN 有官方搜索 API（documents[]：mdn_url/title/summary），比 site: 兜底可靠得多。
+backends.mdn = async (ctx) => {
   const { client, query, limit, timeoutMs } = ctx;
   const { data } = await client.json(
-    `https://registry.npmjs.org/-/v1/search?text=${enc(query)}&size=${Math.min(25, limit)}`,
+    `https://developer.mozilla.org/api/v1/search?q=${enc(query)}&locale=zh-CN`,
     { timeoutMs },
   );
+  const docs = data && Array.isArray(data.documents) ? data.documents : [];
+  return docs.slice(0, Math.max(limit, 8)).map((doc) => ({
+    title: doc.title || doc.slug || '',
+    url: doc.mdn_url ? `https://developer.mozilla.org${doc.mdn_url}` : 'https://developer.mozilla.org/',
+    snippet: String(doc.summary || '').slice(0, 300),
+    extra: { score: doc.score, popularity: doc.popularity },
+  }));
+};
+
+backends.npm = async (ctx) => {
+  const { client, query, limit, timeoutMs } = ctx;
+  // 并发打两个 registry：本机 registry.npmjs.org 常常直接超时，串行会白等一整个超时窗口。
+  const attempts = NPM_REGISTRIES.map((registry) =>
+    client
+      .json(`${registry}/-/v1/search?text=${enc(query)}&size=${Math.min(25, limit)}`, {
+        timeoutMs: Math.min(timeoutMs, 6000),
+      })
+      .then((response) => ({ data: response.data }))
+      .catch((error) => ({ error })),
+  );
+  // 谁先成功用谁：不要等那个一定会超时的 registry 把整次搜索拖满 6 秒。
+  const data = await new Promise((resolve, reject) => {
+    let pending = attempts.length;
+    let lastError;
+    for (const attempt of attempts) {
+      attempt.then((result) => {
+        if (result.data !== undefined) {
+          resolve(result.data);
+          return;
+        }
+        lastError = result.error;
+        pending -= 1;
+        if (pending === 0) reject(lastError || new Error('npm registry unreachable'));
+      });
+    }
+  });
   const items = (data && Array.isArray(data.objects) ? data.objects : []).map((entry) => ({
     title: `${entry.package.name}@${entry.package.version}`,
     url: `https://www.npmjs.com/package/${entry.package.name}`,
@@ -1927,7 +2046,7 @@ const ENGINE_SELF_HOST = {
 };
 
 async function siteSearch(ctx) {
-  const { query, site, limit } = ctx;
+  const { query, site, limit, stats } = ctx;
   const scoped = `${query} site:${site}`;
   const rows = [];
   const attempts = [
@@ -1937,15 +2056,29 @@ async function siteSearch(ctx) {
     () => BACKENDS.baidu({ ...ctx, query: scoped }),
   ];
   for (const attempt of attempts) {
+    let found = [];
     try {
-      const found = await attempt();
-      for (const row of found) {
-        const url = absolutize(row.url, `https://${site}`);
-        const host = hostOf(url);
-        if (host === site || host.endsWith(`.${site}`)) rows.push({ ...row, url });
-      }
+      found = await attempt();
     } catch {
-      // fall through to the next engine
+      // 这个引擎挡了（验证码 / 反爬），换下一个
+      continue;
+    }
+    let matched = 0;
+    for (const row of found) {
+      const url = absolutize(row.url, `https://${site}`);
+      const host = hostOf(url);
+      if (host === site || host.endsWith(`.${site}`)) {
+        rows.push({ ...row, url });
+        matched += 1;
+      }
+    }
+    // 引擎返回了一堆结果却一条都不属于这个站点，说明它压根没执行 site: —— 再问下一个引擎也一样，直接收手。
+    if (matched === 0 && found.length >= 3) {
+      if (stats && typeof stats === 'object') {
+        stats.ignored = true;
+        stats.engine = (ctx.engine || '') || (stats.engine || '');
+      }
+      break;
     }
     if (rows.length >= limit) break;
   }
@@ -1999,7 +2132,7 @@ async function collectPages(fetchPage, { pages = 1, limit = 20, singlePage = fal
 }
 
 /** 真正支持 page 参数的后端；其余后端重复请求同一页只会被 dedupe 吃掉。 */
-const PAGED_BACKENDS = new Set(['csdn', 'v2ex', 'github', 'stackexchange', 'hackernews', 'bilibili', 'so360', 'baidu', 'weixin']);
+const PAGED_BACKENDS = new Set(['csdn', 'v2ex', 'github', 'stackexchange', 'hackernews', 'bilibili', 'so360', 'baidu', 'weixin', 'segmentfault']);
 
 export async function runSearch(options) {
   const query = String(options.query || '').trim();
@@ -2087,11 +2220,14 @@ export async function runSearch(options) {
       }
       // 站内兜底：一条都没留下，或者少得可怜（< 3 条）时，用 site: 站内检索补一批再合并去重。
       // 单平台抓取本身有上限（bing 只有 10 条），不补的话「B 站只剩 1 条」这种会白白丢掉条数。
+      let siteIgnored = false;
       if (def.list !== true && def.site && items.length < Math.min(3, limit)) {
-        const extra = await siteSearch({ client, query, site: def.site, limit: fetchLimit, timeoutMs: platformTimeout });
+        const siteStats = {};
+        const extra = await siteSearch({ client, query, site: def.site, limit: fetchLimit, timeoutMs: platformTimeout, stats: siteStats });
         const more = (extra || [])
           .map((row) => result(id, def, row))
           .filter((item) => !isLandingPage(item.url) && !isJunkResult(item, query));
+        siteIgnored = siteStats.ignored === true;
         items = dedupe(items.concat(more)).slice(0, limit);
       }
       if (def.list !== true && def.site && query !== '' && items.length < limit) {
@@ -2121,7 +2257,9 @@ export async function runSearch(options) {
             : def.custom
             ? '没从页面里解析到结果（该站点可能依赖浏览器渲染，可直接在浏览器打开）'
             : def.site
-              ? '站点内没抓到正文结果（首页/频道页已过滤），可直接在浏览器打开'
+              ? siteIgnored
+                ? '搜索引擎忽略了 site: 过滤（该站点不支持服务端检索），已给站内入口'
+                : '站点内没抓到正文结果（首页/频道页已过滤），可直接在浏览器打开'
               : 'no results',
         count: items.length,
         browser: browserUrl,

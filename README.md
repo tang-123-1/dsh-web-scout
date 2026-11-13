@@ -405,8 +405,11 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | 知乎推荐 | `zhihu-recommend` | `page_number` | **需要登录**；首页推荐流，6 条/页 |
 | 知乎关注 | `zhihu-follow` | `page_number` | **需要登录**；关注流，6 条/页 |
 | GitHub / Stack Overflow / npm / Hacker News / 维基百科 | 各自接口 | `page` | Stack Overflow 与维基需要代理 |
+| MDN 文档 | `developer.mozilla.org/api/v1/search` | - | 官方搜索 API，`documents[]` 带 `mdn_url`/`summary` |
+| 豆瓣 | `movie.douban.com/j/subject_suggest` | - | 联想接口免登录，返回影视/书目 + 海报 |
+| 思否 | `segmentfault.com/search` | `page` | 服务端渲染，抓 `<a href="/a/ID"><h5>标题` |
 
-**站内检索**（`site:` 双引擎兜底，带域名校验、过滤首页）：知乎、博客园、思否、开源中国、Gitee、抖音、小红书、微博、Reddit、MDN、PyPI、淘宝、京东、1688、亚马逊、闲鱼、豆瓣、少数派、Medium、YouTube。
+**站内检索**（`site:` 双引擎兜底，带域名校验、过滤首页）：知乎、博客园、开源中国、Gitee、抖音、小红书、微博、Reddit、PyPI、淘宝、京东、1688、亚马逊、闲鱼、少数派、Medium、YouTube。
 
 > 加新平台的成本：能直连就在 `engines.js` 的 `BACKENDS` 里加一个 `async (ctx) => rows`，再在 `PLATFORM_LIST` 里挂 `backend`；不能直连就在 `PLATFORM_LIST` 里给个 `site` + `browser(q)`，其余全部自动生效（翻页、去重、过滤、状态药丸都不用管）。
 
@@ -443,6 +446,21 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 - 知乎推荐 / 知乎关注：`/api/v3/feed/topstory*`，6 条/页，`pages` 控制翻几页。**必须先登录知乎**，否则状态药丸会显示「需要登录：还没登录知乎…」。
 - 这八个平台不在默认 9 源里（混进关键词检索会全是噪音），需要时在「站点」分区里点一下加到芯片条；榜单是实时抓取，刷新面板就是最新榜。
 - 只选信息流平台时，插件不会把对话内容硬塞成查询词（`feedOnly` 分支），API 用 `{"op":"search","platforms":["zhihufollow"]}` 即可。
+
+## 连通性修复（v1.19.1）
+
+2026-11 做了一次全平台连通性扫描（47 个 provider 逐个真打），结论和修法：
+
+| 现象 | 根因 | 修法 |
+| --- | --- | --- |
+| 360搜索 必被拦 | 桌面版 `so.com` 按 IP 直接发验证码（6.4 KB 空页） | 命中验证码自动改打 `m.so.com`，用 `m.so.com/jump?u=` 解出真地址，并丢掉 360 自己的「其他人还搜/猜您关注」 |
+| npm 每次超时 | 本机 `registry.npmjs.org` 不可达 | `registry.npmjs.org` 与 `registry.npmmirror.com` **并发**请求，先回先用（110 ms） |
+| 15 个站点永远空 | 必应中文站**完全忽略 `site:`**（换 4 种写法都返回同一批无关结果） | 新增 `siteIgnored` 检测：某引擎 ≥3 条却 0 条命中该站 ⇒ 立刻收手，note 改成「搜索引擎忽略了 site: 过滤（该站点不支持服务端检索），已给站内入口」 |
+| MDN / 豆瓣 / 思否 只有入口 | 它们本来有可用接口 | 新增 `backends.mdn`、`backends.douban`、`backends.segmentfault` |
+
+扫描后的分布（查询 `cordis 插件`）：**ok 19 / empty 19 / blocked 5 / error 4**；其中 error 全是需要代理的站点（谷歌、DuckDuckGo、Brave、维基），blocked 是验证码与未登录（360 已修，百度/搜狗仍按 IP 发验证码，知乎信息流需要登录）。
+
+> 补一句实话：剩下的 empty 平台（博客园、开源中国、Gitee、少数派、微博、小红书、淘宝、京东、1688、闲鱼、抖音、PyPI、Medium、YouTube、Reddit、Hacker News、Stack Overflow、亚马逊）**在当前网络下拿不到服务端结果**——要么站点强制 JS 渲染，要么要登录/签名。它们会稳定返回一条「站内搜索入口」，点开就是该站自己的搜索页。
 
 ## 登录状态
 

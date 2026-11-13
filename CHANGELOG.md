@@ -2,6 +2,23 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
+## 1.19.1
+
+全平台连通性扫描（47 个 provider 逐个真打）之后的修复。
+
+### 修复
+- **360搜索**：桌面版 `so.com` 按 IP 直接返回验证码页，改为命中验证码时自动改打 `m.so.com`，解析 `res-list` 与 `m.so.com/jump?u=` 解出真实地址；顺带过滤 360 塞在结果流里的「其他人还搜 / 猜您关注」推荐链接。
+- **npm**：本机 `registry.npmjs.org` 不可达导致每次 9 s 超时；改为与 `registry.npmmirror.com` **并发**请求、先回先用，实测 9 012 ms → 115 ms。
+- **必应忽略 `site:`**：新增 `siteIgnored` 检测（某引擎返回 ≥3 条却 0 条命中该站即收手），纯站内平台不再白等 3 个引擎；note 改为「搜索引擎忽略了 site: 过滤（该站点不支持服务端检索），已给站内入口」。
+- **新增三个真后端**：MDN 官方搜索 API、豆瓣 `subject_suggest` 联想接口、思否服务端渲染搜索页。
+
+### 清理
+- 删除开发期塞进 profile 的示例 provider（`web-scout-providers/demo.mjs`，id `wsdemo`）；仓库里的 `providers/example-provider.mjs` 保留作文档。
+
+### 验证
+- 扫描：修复前 ok 18 / empty 20 / blocked 5 / error 4，修复后 **ok 19 / empty 19 / blocked 5 / error 4**；360、npm、MDN、豆瓣、思否全部转出真实结果。
+- live：`so360 4 条 835ms`、`npm 4 条 356ms`（体检 115ms）、`mdn "array map" 4 条 577ms`、`douban 龙珠 4 条 299ms`、`segmentfault 2 条 965ms`。
+
 ## 1.19.0
 
 一次功能审计后的瘦身：只删真正没人走到的路径，行为不变。
