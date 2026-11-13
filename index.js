@@ -96,6 +96,19 @@ function searchReport(value) {
     lines.push(`${index + 1}. [${item.platformLabel}] ${item.title}`);
     lines.push(`   ${item.url}`);
     if (item.snippet) lines.push(`   ${item.snippet.replace(/\s+/g, ' ').slice(0, 160)}`);
+    const trend = item.extra && item.extra.trend;
+    if (trend) {
+      const marks = [];
+      if (trend.isNew) marks.push('新上榜');
+      else if (trend.rankDelta > 0) marks.push(`↑${trend.rankDelta}`);
+      else if (trend.rankDelta < 0) marks.push(`↓${Math.abs(trend.rankDelta)}`);
+      if (trend.rank > 0) marks.push(`第${trend.rank}名`);
+      if (Number.isFinite(trend.hotDelta) && Math.abs(trend.hotDelta) >= 1000) {
+        marks.push(`热度${trend.hotDelta > 0 ? '↑' : '↓'}${(Math.abs(trend.hotDelta) / 10000).toFixed(1)}w`);
+      }
+      if (item.extra && Array.isArray(item.extra.resonance) && item.extra.resonance.length > 0) marks.push('跨榜共振');
+      if (marks.length > 0) lines.push(`   ${marks.join(' · ')}`);
+    }
   });
   const status = platforms.map((entry) => {
     const suffix = entry.note && entry.note !== `${entry.note}` ? ` ${entry.note}` : '';

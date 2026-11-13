@@ -557,6 +557,10 @@ window.__ModuleLoader__.load({
         border: `1px solid ${C.line}`,
         background: '#000',
       },
+      trendUp: { marginLeft: '6px', fontSize: '10px', color: C.ok, fontWeight: '600' },
+      trendDown: { marginLeft: '6px', fontSize: '10px', color: C.dim },
+      trendNew: { marginLeft: '6px', padding: '0 5px', borderRadius: '4px', fontSize: '10px', lineHeight: '15px', background: C.warn, color: C.base, fontWeight: '600' },
+      resonanceTag: { marginLeft: '6px', fontSize: '10px', color: C.brand, border: '1px solid currentColor', borderRadius: '4px', padding: '0 5px', lineHeight: '15px' },
       kindTag: {
         fontSize: '10px',
         color: C.dim,
@@ -1149,6 +1153,9 @@ function statusStyle(status) {
       else if (trend.rankDelta > 0) meta.push(`↑${trend.rankDelta}`);
       else if (trend.rankDelta < 0) meta.push(`↓${Math.abs(trend.rankDelta)}`);
       if (trend.rank && trend.rank > 0) meta.push(`第 ${trend.rank} 名`);
+      if (Number.isFinite(trend.hotDelta) && Math.abs(trend.hotDelta) >= 1000) {
+        meta.push(`热度${trend.hotDelta > 0 ? '↑' : '↓'}${(Math.abs(trend.hotDelta) / 10000).toFixed(1)}w`);
+      }
     }
     if (item.extra && Array.isArray(item.extra.resonance) && item.extra.resonance.length > 0) meta.push('共振');
     parts.push(`   ${meta.join(' · ')}`);
