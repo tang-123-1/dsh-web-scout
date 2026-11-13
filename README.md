@@ -1,4 +1,4 @@
-# web-scout · DeepSeek Harness 联网检索插件
+# dsh-web-scout · DeepSeek Harness 联网检索插件
 
 > 对话里说的东西，插件替你去搜：46 个平台、8 个免关键词热榜、证据包、研究模式，还能当 MCP 服务用。
 > Search the web from your chat: 46 platform backends, hot lists, evidence packs, research mode, and an MCP server.
@@ -42,34 +42,36 @@
 - Node.js **≥ 22**（用到全局 `fetch`、`WebSocket`、`node:sqlite`）。
 - 操作系统：Windows / macOS / Linux。登录用的浏览器是 Edge 或 Chrome（macOS 的 `/Applications`、Linux 的 `/usr/bin` 路径都已内置）。
 
-### 方式 A：把仓库目录交给 plugin_manager（推荐）
+### 方式 A：npm 一行装（推荐）
 
 ```bash
-git clone https://github.com/[GITHUB_OWNER]/web-scout.git D:/dshcs/web-scout
+dsh plugin add dsh-web-scout
 ```
 
-然后在 DSH 会话里让 Agent 执行：
+包名就是 `dsh-web-scout`（[npm](https://www.npmjs.com/package/dsh-web-scout)）。DSH 会把它当普通 bundle 装进当前 profile：`dependencies` 里出现 `"dsh-web-scout": "^1.22.0"`，`dsh.profile.bundles` 末尾多一项。
+
+想装到指定 profile：`dsh plugin --profile <名字> add dsh-web-scout`。
+
+### 方式 B：从本仓库装（开发用）
+
+```bash
+git clone https://github.com/tang-123-1/dsh-web-scout.git D:/dshcs/web-scout
+```
 
 ```text
 plugin_manager action=install_bundle target=D:/dshcs/web-scout
 ```
 
-安装成功后 profile 的 `package.json` 会出现 `"@local/web-scout": "link:D:/dshcs/web-scout"`，`dsh.profile.bundles` 末尾多一项 `@local/web-scout`。
+装完 profile 的 `package.json` 里是 `"dsh-web-scout": "link:D:/dshcs/web-scout"`。本包自带的 `cordis.patch.yml`（一行 `insert`，id `web-scout`）由安装器读取，**不要**手抄进 profile 的 `cordis.patch.yml`——同一个包出现在两个 Loader 源里会报 `resolves from multiple active Loader sources`，客户端半就永远加载不出来。
 
-### 方式 B：手动改 profile（不推荐，容易出错）
+### 装完必做两件事
 
-参考 `plugin_manager` 的产物，只改两处：`dependencies` 加 `"@local/web-scout": "link:<仓库绝对路径>"`，`dsh.profile.bundles` 末尾追加 `"@local/web-scout"`，然后重启 DSH。
-
-> 本包自带的 `cordis.patch.yml`（一行 `insert`，id `web-scout`）由安装器读取，用来生成配置行 `include:web-scout`——**不要**把它手抄进 profile 的 `cordis.patch.yml`。同一个包在两个 Loader 源里出现会直接报 `client-modules: package @local/web-scout resolves from multiple active Loader sources`，那样客户端半永远加载不出来。
-
-### 安装后必做两件事
-
-1. **让客户端半进入引导图**：在 DSH 里执行
+1. 让客户端半进入引导图（触发 Host 重新扫描 `dsh.client`）：
    ```text
-   plugin_manager action=set_bundle target=@local/web-scout enabled=false
-   plugin_manager action=set_bundle target=@local/web-scout enabled=true
+   plugin_manager action=set_bundle target=dsh-web-scout enabled=false
+   plugin_manager action=set_bundle target=dsh-web-scout enabled=true
    ```
-   这一步触发 Host 重新扫描 `dsh.client`，把 `@local/web-scout` 写进 `window.__DSH_BOOT__`。**跳过这步，面板挂件不会出现。**
+   **跳过这步面板挂件不会出现。**
 2. **刷新页面**（DevTools 里 `location.reload()`，或重启 DSH）。之后输入框下方应出现「联网检索」挂件。
 
 ### 验证
@@ -550,7 +552,7 @@ Cookie 存在 `~/.dsh/web-scout.json` 的 `cookies` 字段里，**不要提交�
 ## 常见问题
 
 **装好了但没看到挂件？**
-客户端半要出现在 `window.__DSH_BOOT__` 里才会加载。执行一次 `plugin_manager set_bundle target=@local/web-scout enabled=false` 然后 `enabled=true`，再 `location.reload()`。可以用 `POST /web-scout/api {"op":"graph"}` 自检：`has:true, composed:true` 才算进图。
+客户端半要出现在 `window.__DSH_BOOT__` 里才会加载。执行一次 `plugin_manager set_bundle target=dsh-web-scout enabled=false` 然后 `enabled=true`，再 `location.reload()`。可以用 `POST /web-scout/api {"op":"graph"}` 自检：`has:true, composed:true` 才算进图。
 
 **改了 Host 代码不生效？**
 `index.js` / `api.js` / `engines.js` / `store.js` 属于 Host 半，改完必须 `set_bundle` 关开一次；`client.js` 由 `dsh-hmr` 自动发版，但页面要刷新才能看到。

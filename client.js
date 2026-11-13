@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: '@local/web-scout',
+  id: 'dsh-web-scout',
   factory: (require) => {
     const React = require('react');
     const ReactDOM = require('react-dom');

@@ -1,5 +1,14 @@
 # 变更记录
 
+## [1.23.0] - 2026-11-13
+
+### 改名与 npm 发布
+
+- 包名从 `@local/web-scout` 改为 **`dsh-web-scout`**：`package.json` 的 `name`、`client.js` 的 `__ModuleLoader__.load({ id })`、`index.js` 的 `PACKAGE_NAME`、`cordis.patch.yml` 的 `name` 同步（客户端 bundle id 必须等于包名，否则 `clientModules` 不会把它放进 `__DSH_BOOT__`）。
+- 去掉 `private: true`，加 `publishConfig.access = "public"`，可以 `npm publish` 到公开 registry。
+- 安装方式改为 `dsh plugin add dsh-web-scout`（npm 一行装）；仓库安装仍可用 `install_bundle`，只是依赖名变成 `dsh-web-scout`。
+- README 顶部精简：一句话简介 + 4 条能力 + 8 条功能速览 + 2 张截图 + 安装三行，长表格挪到各自小节。
+
 ## [1.22.0] - 2026-11-13
 
 ### 空白站点治理

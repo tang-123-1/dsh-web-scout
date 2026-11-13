@@ -1,4 +1,4 @@
 - insert:
     - id: web-scout
-      name: '@local/web-scout'
+      name: 'dsh-web-scout'
       config: {}

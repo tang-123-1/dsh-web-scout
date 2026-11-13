@@ -1,29 +1,21 @@
 {
-  "name": "@local/web-scout",
-  "version": "1.22.0",
-  "private": true,
+  "name": "dsh-web-scout",
+  "version": "1.23.0",
   "type": "module",
   "description": "给 DeepSeek Harness 的联网检索插件：46 个平台、热搜榜、证据包、MCP 服务。",
   "keywords": [
     "dsh",
+    "dsh-plugin",
     "deepseek-harness",
     "cordis",
     "plugin",
     "web-search",
+    "search",
     "mcp",
     "mcp-server",
-    "search-engine",
     "hot-list",
-    "trend",
-    "evidence-pack",
-    "research-mode",
-    "zhihu",
-    "bilibili",
-    "douyin",
-    "toutiao",
-    "v2ex",
-    "csdn",
-    "selftest"
+    "evidence",
+    "research"
   ],
   "license": "MIT",
   "author": "[YOUR_NAME]",
@@ -90,5 +82,8 @@
   },
   "bin": {
     "web-scout-mcp": "./mcp/server.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

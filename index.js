@@ -34,7 +34,7 @@ function withPlainOutput(definition) {
 
 export const inject = ['tools', 'webServer'];
 
-const PACKAGE_NAME = '@local/web-scout';
+const PACKAGE_NAME = 'dsh-web-scout';
 const JSON_OBJECT = { type: 'object', additionalProperties: true };
 const ROUTE_PATH = '/web-scout/api';
 
