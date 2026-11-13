@@ -21,7 +21,7 @@ import {
 import { openInBrowser } from './open.js';
 import { mergeCookies } from './browserCookies.js';
 import { checkLogin, loginTarget, cookieMapFromPaste, cookiesForDomain } from './login.js';
-import { ensureBrowserSession, captureBrowserCookies, browserStatus } from './browserAuth.js';
+import { ensureBrowserSession, captureBrowserCookies, browserStatus, closeBrowserSession } from './browserAuth.js';
 import { createCache } from './cache.js';
 
 const MAX_BODY = 256 * 1024;
@@ -150,10 +150,24 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
     registerCustomPlatforms(store.get('customPlatforms'));
   }
 
+  // cookie 是凭据：面板只需要知道「哪些域名有登录态」，不能拿到原始值。
+  function redactSettings(settings) {
+    const cookies = settings.cookies || {};
+    const hosts = {};
+    for (const [host, raw] of Object.entries(cookies)) {
+      const count = String(raw)
+        .split(';')
+        .map((pair) => pair.trim())
+        .filter((pair) => pair !== '').length;
+      hosts[host] = count;
+    }
+    return { ...settings, cookies: undefined, cookieHosts: hosts, cookieCount: Object.keys(hosts).length };
+  }
+
   function catalogPayload(settings) {
     return {
       platforms: platformCatalog(),
-      config: settings,
+      config: redactSettings(settings),
       defaults,
       chips: Array.isArray(settings.chips) ? settings.chips : defaults.chips,
       accounts: settings.accounts || {},
@@ -460,7 +474,7 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         return { ...report, text: formatHealth(report) };
       }
       case 'config': {
-        return store.patch(payload.patch || {});
+        return redactSettings(store.patch(payload.patch || {}));
       }
       case 'provider.list': {
         const state = providerBridge && typeof providerBridge.state === 'function' ? providerBridge.state() : { report: null, error: '' };
@@ -591,12 +605,24 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         const verdict = await verify(target.id);
         return { ...verdict, found: captured.count, hosts: Object.keys(captured.cookies), source: 'browser' };
       }
+      case 'browser.close': {
+        const closed = await closeBrowserSession();
+        return { ...closed, ...(await browserStatus()) };
+      }
       case 'browser.status': {
         return browserStatus();
       }
       case 'login.clear': {
-        const removed = dropCookies(String(payload.platform || ''));
-        return { ...removed, ok: true };
+        const platform = String(payload.platform || '');
+        const removed = dropCookies(platform);
+        // 清呆 cookie 之后重新判一次，前端直接拿 loggedIn/cookies/note 更新状态点。
+        let verdict = null;
+        try {
+          verdict = await verify(platform);
+        } catch {
+          verdict = null;
+        }
+        return { ...removed, ...(verdict || {}), cleared: true, ok: true };
       }
       case 'login.status': {
         const cookies = settings.cookies || {};

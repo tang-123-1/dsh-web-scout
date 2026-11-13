@@ -447,6 +447,29 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 - 这八个平台不在默认 9 源里（混进关键词检索会全是噪音），需要时在「站点」分区里点一下加到芯片条；榜单是实时抓取，刷新面板就是最新榜。
 - 只选信息流平台时，插件不会把对话内容硬塞成查询词（`feedOnly` 分支），API 用 `{"op":"search","platforms":["zhihufollow"]}` 即可。
 
+## 自测与修复（v1.20.0）
+
+插件自带一套自测，把 28 个接口选项（op）、6 个 Agent 工具、6 个 MCP 工具都真打一遍——断言走真实网络、真实 store、真实缓存，不 mock。
+
+```bash
+node scripts/selftest.mjs           # 54 项，含搜索/正文/证据包/研究/体检/登录/缓存/脱敏
+node scripts/selftest.mjs --heavy   # 58 项，额外拉起系统浏览器和插件浏览器
+```
+
+跑之前确保 Harness 正在运行（默认打 `http://127.0.0.1:3209/web-scout/api`），退出码 0 表示全绿。
+
+这一轮自测抓出并修掉的 5 个真 bug：
+
+| 现象 | 原因 | 修法 |
+| --- | --- | --- |
+| Agent 工具报 `invalid output: value is not lossless JSON` | 结果行里有 `extra: undefined`，工具输出必须是无损 JSON | `net.js` 加 `plain()`（丢 undefined、NaN→null、Date→ISO），6 个工具的 `execute` 统一包一层 |
+| 自定义站点选「网页」类型被当成文章 | `CUSTOM_KINDS` 白名单缺 `web`/`social` | 白名单补齐，面板选项同步 |
+| 「清除登录」后前端显示 undefined | `login.clear` 只返回清理结果，没带判定 | 清完再跑一次校验，返回 `loggedIn/note/cleared` |
+| 关掉插件浏览器后进程还在（残留 3 个 msedge） | CDP `Browser.close` 只关窗口不杀进程 | `readDevToolsPort()` 复用活实例；关闭时等端口安静 → `taskkill /F /T /PID` → 清 state |
+| 没法关插件浏览器 | 剪枝时把关闭能力删了 | 新增 `browser.close` op 与面板入口 |
+| 面板能拿到明文 Cookie | `catalog`/`config` 直接回全量设置，含 `cookies` 原始值 | 统一走 `redactSettings()`：只回 `cookieHosts`（域名 → 条数）与 `cookieCount` |
+
+顺手补的：`plain()` 让工具输出可 JSON 往返（`JSON.parse(JSON.stringify(x))` 与 `x` 深等），`browserAuth.js` 从 9.4 KB 涨到 11.1 KB 但换来干净的生命周期。
 ## 连通性修复（v1.19.1）
 
 2026-11 做了一次全平台连通性扫描（47 个 provider 逐个真打），结论和修法：

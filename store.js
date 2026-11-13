@@ -6,7 +6,7 @@ import path from 'node:path';
 const STORE_VERSION = 2;
 
 /** 自定义站点允许的展示类型，用来决定面板里渲染成卡片还是视频。 */
-const CUSTOM_KINDS = new Set(['auto', 'video', 'article', 'qa', 'forum', 'hot', 'shop', 'code', 'doc']);
+const CUSTOM_KINDS = new Set(['auto', 'video', 'article', 'qa', 'forum', 'hot', 'shop', 'code', 'doc', 'social', 'web']);
 
 const DEFAULTS = {
   proxy: '',

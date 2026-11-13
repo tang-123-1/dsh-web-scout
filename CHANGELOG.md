@@ -2,7 +2,24 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
-## 1.19.1
+## 1.20.0
+
+自测套件 + 五个真 bug。
+
+### 新增
+- `scripts/selftest.mjs`：27 个 op 全覆盖的自测（`--heavy` 额外跑系统浏览器与插件浏览器），50/54 项断言。
+- `browser.close` op：真正关掉插件自管的浏览器（CDP 关闭 + 进程兜底 + 清 state）。
+
+### 修复
+- 工具输出不是无损 JSON（`extra: undefined` 导致 `invalid output: value is not lossless JSON`）：`net.js` 新增 `plain()`，6 个工具统一走净化。
+- 自定义站点 `kind` 白名单缺 `web`/`social`，选「网页」会被降级成文章。
+- `login.clear` 缺 `loggedIn/note`，前端读不到判定结果。
+- 插件浏览器关闭后进程残留、重复拉起多实例：用 `DevToolsActivePort` 复用，关闭时 `taskkill /F /T /PID` 兜底。
+
+- `catalog` / `config` 不再返回明文 Cookie：改为 `cookieHosts`（域名 → 条数）与 `cookieCount`，响应体从 100+ KB 降到 11 KB。
+
+### 验证
+- 12 套离线/联网验收全绿（203 → 207 项）；`selftest` 54/54、`selftest --heavy` 58/58；`verify-plain` 9/9。
 
 全平台连通性扫描（47 个 provider 逐个真打）之后的修复。
 

@@ -1,7 +1,7 @@
 // 插件自管的浏览器会话：用一个独立 profile 启动 Chromium（Edge/Chrome），
 // 通过 DevTools 协议（CDP）读取该会话里的 Cookie——浏览器开着也能读，
 // 不需要拷 cookie 库、不需要 DPAPI 解密、不会碰用户日常浏览器。
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -174,6 +174,18 @@ async function waitForCdp(port, deadline) {
  * 启动（或复用）插件自管的浏览器。
  * @param {{url?: string, headless?: boolean}} options
  */
+// 浏览器起来后会往 profile 目录写 DevToolsActivePort（第一行端口）。
+// state 丢了、或 browser.close 把 port 归零之后，靠它把还活着的实例捡回来，避免重复拉起。
+function readDevToolsPort() {
+  try {
+    const raw = fs.readFileSync(path.join(profileDir(), 'DevToolsActivePort'), 'utf8');
+    const port = Number(raw.split('\n')[0]);
+    return Number.isInteger(port) && port > 0 ? port : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export async function ensureBrowserSession(options = {}) {
   const dir = profileDir();
   const state = readState();
@@ -182,6 +194,16 @@ export async function ensureBrowserSession(options = {}) {
     if (version && version.webSocketDebuggerUrl) {
       if (options.url) await openTab(state.port, options.url);
       return { port: state.port, profile: dir, reused: true, browser: state.browser || '', version: version.Browser };
+    }
+  }
+
+  const activePort = readDevToolsPort();
+  if (activePort > 0) {
+    const alive = await cdpVersion(activePort);
+    if (alive && alive.webSocketDebuggerUrl) {
+      if (options.url) await openTab(activePort, options.url);
+      writeState({ ...(state || {}), port: activePort, browser: (state && state.browser) || findBrowser(), at: new Date().toISOString(), profile: dir });
+      return { port: activePort, profile: dir, reused: true, browser: (state && state.browser) || '', version: alive.Browser };
     }
   }
 
@@ -287,4 +309,51 @@ export async function browserStatus() {
     return { running: false, stale: true, lastPort: state.port, ...base };
   }
   return { running: true, ...base, port: state.port, pid: state.pid, version: version.Browser };
+}
+/**
+ * 关掉插件自己拉起的浏览器（CDP Browser.close，然后把 state 里的 port 归零）。
+ * 面板上的「关闭插件浏览器」和 op browser.close 都走这里。
+ */
+export async function closeBrowserSession() {
+  const state = readState();
+  const port = Number(state && state.port) || readDevToolsPort();
+  const pid = Number(state && state.pid) || 0;
+  if (port === 0 && pid === 0) return { closed: false, reason: 'no-session', port: 0 };
+  let reason = '';
+  try {
+    const version = await cdpVersion(port);
+    if (version && version.webSocketDebuggerUrl) {
+      try {
+        await cdpCall(version.webSocketDebuggerUrl, 'Browser.close', {}, 4000);
+      } catch {
+        reason = 'cdp-close-failed';
+      }
+    } else {
+      reason = 'port-not-responding';
+    }
+  } catch {
+    reason = 'port-not-responding';
+  }
+  // CDP 的 Browser.close 有时只关窗口不杀进程：等端口彻底安静，再按 pid 兜底。
+  const deadline = Date.now() + 2500;
+  while (Date.now() < deadline) {
+    const alive = port > 0 ? await cdpVersion(port).catch(() => null) : null;
+    if (!alive) break;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  if (pid > 0) {
+    try {
+      if (process.platform === 'win32') spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore' });
+      else process.kill(pid, 'SIGTERM');
+    } catch {
+      /* 进程已经没了 */
+    }
+  }
+  try {
+    fs.rmSync(path.join(profileDir(), 'DevToolsActivePort'), { force: true });
+  } catch {
+    /* ignore */
+  }
+  writeState({ ...(state || {}), port: 0, pid: 0 });
+  return { closed: true, port, pid, ...(reason === '' ? {} : { reason }) };
 }

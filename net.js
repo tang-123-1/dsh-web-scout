@@ -424,3 +424,38 @@ export function hostOf(url) {
     return '';
   }
 }
+// ---- 输出净化：Harness 的工具返回值必须是「无损 JSON」---------------------
+// 引擎抓到的行里常有 undefined 字段、NaN 分数、Date/Map 之类，direct 返回给
+// Host 时会被判 invalid output: value is not lossless JSON。这里统一洗成纯数据。
+export function plain(value, depth = 0) {
+  if (value === null) return null;
+  const type = typeof value;
+  if (type === 'string' || type === 'boolean') return value;
+  if (type === 'number') return Number.isFinite(value) ? value : null;
+  if (type === 'bigint') return String(value);
+  if (type === 'undefined' || type === 'function' || type === 'symbol') return undefined;
+  if (depth > 12) return null;
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) {
+    return value.map((item) => {
+      const next = plain(item, depth + 1);
+      return next === undefined ? null : next;
+    });
+  }
+  if (value instanceof Map) {
+    const out = {};
+    for (const [key, item] of value) {
+      const next = plain(item, depth + 1);
+      if (next !== undefined) out[String(key)] = next;
+    }
+    return out;
+  }
+  if (value instanceof Set) return [...value].map((item) => plain(item, depth + 1) ?? null);
+  if (typeof value.toJSON === 'function') return plain(value.toJSON(), depth + 1);
+  const out = {};
+  for (const key of Object.keys(value)) {
+    const next = plain(value[key], depth + 1);
+    if (next !== undefined) out[key] = next;
+  }
+  return out;
+}

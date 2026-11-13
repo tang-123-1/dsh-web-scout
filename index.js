@@ -18,11 +18,20 @@ import {
   PLATFORMS,
 } from './engines.js';
 import { openInBrowser } from './open.js';
+import { plain } from './net.js';
 import { ScoutStore } from './store.js';
 import { createApi } from './api.js';
 import { createCache } from './cache.js';
 
 export const name = 'web-scout';
+// 工具返回值必须是纯 JSON：引擎行里常有 undefined / NaN / Date，Host 侧会判 not lossless JSON。
+function withPlainOutput(definition) {
+  return {
+    ...definition,
+    execute: async (args, exec) => plain(await definition.execute(args, exec)),
+  };
+}
+
 export const inject = ['tools', 'webServer'];
 
 const PACKAGE_NAME = '@local/web-scout';
@@ -279,7 +288,7 @@ export function apply(ctx, config = {}) {
   }
 
   ctx.effect(() =>
-    ctx.tools.register({
+    ctx.tools.register(withPlainOutput({
       name: 'web_scout_search',
       description:
         'Search the web (Bing/360 + platform-scoped: 知乎、CSDN、掘金、B站、GitHub、小红书、淘宝等). Query can be omitted: it is derived from the current conversation. Returns titles, URLs, snippets, per-platform status, and browser fallback URLs.',
@@ -386,11 +395,11 @@ export function apply(ctx, config = {}) {
         cache.set(cacheKey, payloadOut, Math.min(24 * 60 * 60 * 1000, Math.max(60 * 1000, Number(current.cacheTtlMs) || defaults.cacheTtlMs)));
         return payloadOut;
       },
-    }),
+    })),
   );
 
   ctx.effect(() =>
-    ctx.tools.register({
+    ctx.tools.register(withPlainOutput({
       name: 'web_scout_open',
       description:
         'Open a URL (or a platform search page) in the user\'s desktop browser. Use when a site is unreachable from the server side, or the user wants to look at results themselves.',
@@ -418,11 +427,11 @@ export function apply(ctx, config = {}) {
         }
         return openInBrowser(url);
       },
-    }),
+    })),
   );
 
   ctx.effect(() =>
-    ctx.tools.register({
+    ctx.tools.register(withPlainOutput({
       name: 'web_scout_read',
       description: 'Fetch one web page and return its readable text (title, status, truncated flag). Goes through the configured proxy, unlike a bare fetch.',
       parameters: {
@@ -453,11 +462,11 @@ export function apply(ctx, config = {}) {
       cookies: current.cookies || {},
     });
       },
-    }),
+    })),
   );
 
   ctx.effect(() =>
-    ctx.tools.register({
+    ctx.tools.register(withPlainOutput({
       name: 'web_scout_evidence',
       description:
         'Search and return an EVIDENCE PACK instead of a raw list: top items scored by relevance / freshness / native backend, each with a quoted excerpt, plus per-platform coverage and gaps. Use when you need citable material rather than 50 titles.',
@@ -541,11 +550,11 @@ export function apply(ctx, config = {}) {
         cache.set(cacheKey, data, Math.min(86400000, Math.max(60000, Number(current.cacheTtlMs) || 21600000)));
         return data;
       },
-    }),
+    })),
   );
 
   ctx.effect(() =>
-    ctx.tools.register({
+    ctx.tools.register(withPlainOutput({
       name: 'web_scout_research',
       description:
         'Run a multi-round research job: plan the query (intent routing + query variants), search in waves, stop early once the quality quorum is met, then return an evidence pack plus a research report. Use for open-ended questions that need several sources rather than one search.',
@@ -640,11 +649,11 @@ export function apply(ctx, config = {}) {
         cache.set(cacheKey, data, Math.min(86400000, Math.max(60000, Number(current.cacheTtlMs) || 21600000)));
         return data;
       },
-    }),
+    })),
   );
 
   ctx.effect(() =>
-    ctx.tools.register({
+    ctx.tools.register(withPlainOutput({
       name: 'web_scout_health',
       description:
         'Probe every native search backend right now and report which ones actually work (ok / empty / blocked / login / error) with latency. Use it before blaming a query when results look thin.',
@@ -681,7 +690,7 @@ export function apply(ctx, config = {}) {
         });
         return { ...report, text: formatHealth(report) };
       },
-    }),
+    })),
   );
 
   return {

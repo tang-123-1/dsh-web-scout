@@ -1575,7 +1575,7 @@ function statusStyle(status) {
                           title: t('siteKind'),
                           onChange: (event) => setForm({ ...form, kind: event.target.value }),
                         },
-                        ['auto', 'video', 'article', 'qa', 'forum', 'hot', 'shop', 'code', 'doc'].map((value) =>
+                        ['auto', 'web', 'article', 'video', 'qa', 'forum', 'hot', 'social', 'shop', 'code', 'doc'].map((value) =>
                           h('option', { key: value, value }, kindLabel(t, value === 'auto' ? 'kindAuto' : 'kind' + value.charAt(0).toUpperCase() + value.slice(1))),
                         ),
                       ),
