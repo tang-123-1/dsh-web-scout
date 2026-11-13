@@ -26,6 +26,12 @@ window.__ModuleLoader__.load({
         evidenceHint: '把当前结果压成带摘录与缺口的证据包，放进输入框',
         evidenceAdded: '证据包已放进输入框，回车即可发送',
         evidenceBusy: '整理中…',
+        research: '研究',
+        researchHint: '按意图规划多个平台、自动换说法多跑几轮，最后给一份研究报告',
+        researchBusy: '研究中…',
+        researchAdded: '研究报告已加入输入框（{rounds} 轮 · {quality}）',
+        researchMet: '质量达标',
+        researchShort: '未达门槛',
         healthRun: '体检',
         healthBusy: '体检中…',
         healthTally: '体检：可用 {ok} · 空 {empty} · 被拦 {blocked} · 需登录 {login} · 出错 {error}',
@@ -116,6 +122,12 @@ window.__ModuleLoader__.load({
         evidenceHint: 'Compress the current results into an evidence pack with excerpts and gaps',
         evidenceAdded: 'Evidence pack added to the composer — press Enter to send',
         evidenceBusy: 'Packing…',
+        research: 'Research',
+        researchHint: 'Route the question to several platforms, retry with other phrasings, then hand back a report',
+        researchBusy: 'Researching…',
+        researchAdded: 'Report inserted into the composer ({rounds} rounds · {quality})',
+        researchMet: 'quorum met',
+        researchShort: 'below quorum',
         healthRun: 'Check',
         healthBusy: 'Checking…',
         healthTally: 'Health: ok {ok} · empty {empty} · blocked {blocked} · login {login} · error {error}',
@@ -751,6 +763,7 @@ function statusStyle(status) {
   const [playing, setPlaying] = React.useState('');
   const [chatNote, setChatNote] = React.useState('');
   const [evidenceBusy, setEvidenceBusy] = React.useState(false);
+  const [researchBusy, setResearchBusy] = React.useState(false);
   const [health, setHealth] = React.useState(null);
   const [healthBusy, setHealthBusy] = React.useState(false);
       const [view, setView] = React.useState(() => {
@@ -1205,6 +1218,42 @@ function statusStyle(status) {
       setEvidenceBusy(false);
     }
   };
+  const toResearch = async () => {
+    if (researchBusy) return;
+    setResearchBusy(true);
+    const say = (message) => {
+      setChatNote(message);
+      window.setTimeout(() => setChatNote(''), 5000);
+    };
+    try {
+      const result = await post('research', {
+        query: (data && data.query) || '',
+        platforms: selected,
+        sessionId: props.sessionId,
+      });
+      const body = result && typeof result.text === 'string' ? result.text : '';
+      if (!body) {
+        say(t('chatFailed'));
+        return;
+      }
+      const mode = insertToComposer(body);
+      if (!mode) {
+        say(t('chatFailed'));
+        return;
+      }
+      const quality = result && result.quality ? result.quality : {};
+      say(
+        fill(t('researchAdded'), {
+          rounds: (result && result.rounds ? result.rounds.length : 0) || 0,
+          quality: quality.met ? t('researchMet') : t('researchShort'),
+        }),
+      );
+    } catch (error) {
+      say(String((error && error.message) || error));
+    } finally {
+      setResearchBusy(false);
+    }
+  };
   const runHealth = async (ids) => {
     if (healthBusy) return;
     setHealthBusy(true);
@@ -1319,6 +1368,19 @@ function statusStyle(status) {
                       onClick: toEvidence,
                     },
                     evidenceBusy ? t('evidenceBusy') : t('evidence'),
+                  )
+                : null,
+              rows.length > 0
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      title: t('researchHint'),
+                      disabled: researchBusy,
+                      style: merge(S.viewBtn, { marginRight: '2px', color: C.brand }),
+                      onClick: toResearch,
+                    },
+                    researchBusy ? t('researchBusy') : t('research'),
                   )
                 : null,
               h(

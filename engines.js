@@ -2644,3 +2644,375 @@ export function browserUrlFor(platformId, query) {
 }
 
 export const MOBILE_UA = UA_MOBILE;
+
+// ---------------------------------------------------------------- 查询规划 + 研究模式（v1.18）
+
+const INTENT_LABELS = {
+  code: '代码/报错',
+  doc: '文档/API',
+  academic: '论文/研究',
+  news: '新闻/热榜',
+  howto: '教程/怎么做',
+  compare: '对比/选型',
+  product: '商品/价格',
+  general: '通用',
+};
+
+const INTENT_RULES = [
+  { intent: 'code', pattern: /报错|异常|堆栈|崩溃|编译|语法|类型错误|空指针|undefined|nan|stack ?trace|exception|traceback|segfault|error|regex|正则|\bsql\b|\bsdk\b|cve-\d|漏洞/i },
+  { intent: 'doc', pattern: /官方文档|文档|手册|说明书|参考|reference|manual|\bapi\b|参数说明|配置项|迁移指南|changelog|release notes/i },
+  { intent: 'academic', pattern: /论文|文献|综述|研究|实验|数据集|arxiv|paper|survey|citation|引用量|benchmark/i },
+  { intent: 'news', pattern: /新闻|最新|今天|昨天|本周|发布|官宣|公告|热搜|头条|榜单|排行|release|announce/i },
+  { intent: 'howto', pattern: /怎么|如何|怎样|教程|入门|指南|步骤|手把手|how ?to|tutorial|guide|setup|install/i },
+  { intent: 'compare', pattern: /对比|区别|差异|哪个好|优缺点|选型|\bvs\.?\b|versus|比较|替代/i },
+  { intent: 'product', pattern: /价格|多少钱|购买|在哪买|测评|优惠|折扣|券|淘宝|京东|闲鱼|拼多多|开箱/i },
+];
+
+const INTENT_ROUTES = {
+  code: ['github', 'stackoverflow', 'csdn', 'juejin', 'v2ex'],
+  doc: ['github', 'stackoverflow', 'csdn', 'mdn', 'bing'],
+  academic: ['wikipedia', 'stackexchange', 'zhihu', 'medium', 'bing'],
+  news: ['toutiao', 'weibohot', 'baiduhot', 'toutiaohot', 'bing'],
+  howto: ['zhihu', 'csdn', 'juejin', 'bilibili', 'bing'],
+  compare: ['zhihu', 'v2ex', 'csdn', 'bing'],
+  product: ['taobao', 'jd', 'zhihu', 'xianyu', 'bing'],
+  general: ['bing', 'zhihu', 'csdn', 'juejin', 'v2ex', 'toutiao'],
+};
+
+const TERM_MAP = {
+  插件: 'plugin',
+  报错: 'error',
+  错误: 'error',
+  依赖: 'dependency',
+  部署: 'deploy',
+  缓存: 'cache',
+  接口: 'api',
+  文档: 'docs',
+  性能: 'performance',
+  并发: 'concurrency',
+  数据库: 'database',
+  测试: 'test',
+  配置: 'config',
+  安装: 'install',
+  教程: 'tutorial',
+  对比: 'vs',
+  优化: 'optimization',
+  内存: 'memory',
+  线程: 'thread',
+  异步: 'async',
+  类型: 'type',
+  编译: 'compile',
+  打包: 'bundle',
+  镜像: 'image',
+  容器: 'container',
+  权限: 'permission',
+  登录: 'login',
+  搜索: 'search',
+  爬虫: 'crawler',
+  正则: 'regex',
+  函数: 'function',
+  数组: 'array',
+  对象: 'object',
+  反射: 'reflection',
+  源码: 'source code',
+  框架: 'framework',
+  组件: 'component',
+  库: 'library',
+  版本: 'version',
+  升级: 'upgrade',
+};
+
+const CODE_TOKEN_PATTERN = /`([^`]{2,60})`|"([^"]{2,60})"|'([^']{2,60})'|(\b[A-Z][A-Z0-9_]{2,}\b|\b[a-z]+[A-Z][a-zA-Z0-9]+\b|\b[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z]{2,5}\b)/g;
+const HOST_PATTERN = /\b((?:[a-z0-9-]+\.)+(?:com|cn|net|org|io|dev|ai|co|me|app|site|xyz|so|top))\b/i;
+
+const clampNumber = (value, min, max, fallback) => {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+};
+
+/** 中文技术词 → 英文，用来生成「换个说法再搜一次」的变体。 */
+function latinVariant(query) {
+  const parts = [];
+  let rest = String(query);
+  for (const [zh, en] of Object.entries(TERM_MAP)) {
+    if (rest.includes(zh)) {
+      parts.push(en);
+      rest = rest.split(zh).join(' ');
+    }
+  }
+  if (parts.length === 0) return '';
+  const leftover = rest
+    .split(/\s+/)
+    .map((token) => token.replace(/[^\p{Script=Latin}\p{Number}._-]/gu, ''))
+    .filter((token) => token.length >= 2);
+  const latin = [...parts, ...leftover].join(' ').replace(/\s+/g, ' ').trim();
+  return /\p{Script=Latin}/u.test(latin) ? latin : '';
+}
+
+/** 从查询里抠出代码样式的 token（报错名、函数名、文件名），加引号提升命中率。 */
+function quotedVariant(query) {
+  CODE_TOKEN_PATTERN.lastIndex = 0;
+  if (/[`"']/.test(query)) return '';
+  let match = CODE_TOKEN_PATTERN.exec(query);
+  while (match) {
+    const token = (match[1] || match[2] || match[3] || match[4] || '').trim();
+    const usable = token !== '' && token.length <= 60 && /[A-Za-z\u4e00-\u9fa5]/.test(token);
+    const looksLikeHost = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|cn|net|org|io|dev|ai|co|me|app|site|xyz|so|top)$/i.test(token);
+    if (usable && !looksLikeHost) {
+      return query.replace(token, `"${token}"`);
+    }
+    match = CODE_TOKEN_PATTERN.exec(query);
+  }
+  return '';
+}
+
+/** 查询里已经带了域名 → 生成 site: 变体，让搜索引擎直接限定站点。 */
+function domainVariant(query) {
+  const match = HOST_PATTERN.exec(query);
+  if (!match) return '';
+  const host = match[1].toLowerCase();
+  const rest = query.replace(match[0], ' ').replace(/\s+/g, ' ').trim();
+  if (rest === '') return '';
+  return `${rest} site:${host}`;
+}
+
+/**
+ * 查询规划：判断意图、生成 1–4 个检索变体、挑出该去的平台。
+ * 纯函数，不发请求；面板/工具/MCP 都用它决定「这次该问谁」。
+ */
+export function planQuery(options = {}) {
+  const query = String(options.query || '').trim();
+  const explicitInput = Array.isArray(options.platforms)
+    ? options.platforms.filter((id) => typeof id === 'string' && id !== '' && id !== 'auto' && id !== 'all' && PLATFORMS.has(id))
+    : [];
+  const hintInput = Array.isArray(options.hints)
+    ? options.hints.filter((id) => PLATFORMS.has(id))
+    : inferPlatforms(query);
+
+  const reasons = [];
+  let intent = 'general';
+  let confidence = 0.4;
+  if (query !== '') {
+    for (const rule of INTENT_RULES) {
+      if (rule.pattern.test(query)) {
+        intent = rule.intent;
+        confidence = 0.72;
+        reasons.push(`命中意图关键词：${INTENT_LABELS[rule.intent]}`);
+        break;
+      }
+    }
+  }
+  if (intent === 'general' && query.length <= 12 && query !== '') {
+    confidence = 0.5;
+    reasons.push('查询很短，先按通用检索');
+  }
+
+  const variants = [];
+  const push = (value, why) => {
+    const text = String(value || '').trim();
+    if (text === '' || text === query) return;
+    if (variants.some((item) => item.text === text)) return;
+    variants.push({ text, why });
+  };
+  if (query !== '') {
+    const latin = latinVariant(query);
+    if (latin !== '') push(latin, '中文技术词转英文术语');
+    const scoped = domainVariant(query);
+    if (scoped !== '') push(scoped, '限定到查询里的域名');
+    const quoted = quotedVariant(query);
+    if (quoted !== '') push(quoted, '代码/报错 token 加引号');
+  }
+
+  const route = INTENT_ROUTES[intent] || INTENT_ROUTES.general;
+  const routed = route.filter((id) => PLATFORMS.has(id));
+  const focusInput = [...hintInput, ...explicitInput];
+  // 只点了榜单/信息流：不要往里面掺关键词引擎，否则空查询会把整波检索拖挂。
+  const feedFocus = focusInput.length > 0 && focusInput.every((id) => {
+    const def = PLATFORMS.get(id);
+    return Boolean(def && def.list === true);
+  });
+  const platforms = [];
+  for (const id of [...focusInput, ...(feedFocus ? [] : routed)]) {
+    if (!platforms.includes(id) && PLATFORMS.has(id)) platforms.push(id);
+  }
+  if (hintInput.length > 0) reasons.push(`查询里点名了 ${hintInput.length} 个站点`);
+  if (explicitInput.length > 0) reasons.push('调用方指定了平台');
+
+  const maxPlatforms = clampNumber(options.maxPlatforms, 1, 10, 6);
+  return {
+    query,
+    intent,
+    intentLabel: INTENT_LABELS[intent] || INTENT_LABELS.general,
+    confidence,
+    reasons,
+    variants: [{ text: query, why: '原始查询' }, ...variants].filter((item) => item.text !== ''),
+    platforms: platforms.slice(0, maxPlatforms),
+    explicit: explicitInput.length > 0,
+    explicitPlatforms: explicitInput,
+    hintPlatforms: hintInput,
+    hints: hintInput,
+  };
+}
+
+/** 把一次研究拆成最多 3 波：主平台 → 换说法再来一轮 → 剩余平台补漏。 */
+export function planWaves(plan, options = {}) {
+  const maxWaves = clampNumber(options.maxRounds, 1, 3, 3);
+  const maxPlatforms = clampNumber(options.maxPlatforms, 1, 10, 6);
+  const primary = plan.platforms.slice(0, 4);
+  const rest = plan.platforms.slice(4, maxPlatforms);
+  const waves = [];
+  if (primary.length > 0) waves.push({ variant: plan.variants[0] ? plan.variants[0].text : plan.query, platforms: primary, why: '主平台' });
+  if (plan.variants.length > 1) {
+    waves.push({ variant: plan.variants[1].text, platforms: primary.slice(0, 3), why: plan.variants[1].why });
+  }
+  if (rest.length > 0) {
+    waves.push({ variant: plan.variants[0] ? plan.variants[0].text : plan.query, platforms: rest, why: '补漏平台' });
+  }
+  return waves.slice(0, maxWaves);
+}
+
+/**
+ * 研究模式：按规划分波检索 → 累积去重 → 每波结束评估「质量是否够用」→ 够了就停。
+ * 与单次搜索的区别：会用不同措辞重试、按 intent 换平台、有时间预算与质量门槛。
+ */
+export async function research(options = {}) {
+  const started = Date.now();
+  const budgetMs = clampNumber(options.budgetMs, 3000, 60000, 12000);
+  const maxRounds = clampNumber(options.maxRounds, 1, 3, 3);
+  const minItems = clampNumber(options.minItems, 1, 20, 6);
+  const quorumPlatforms = clampNumber(options.quorumPlatforms, 1, 8, 3);
+  const quorumKinds = clampNumber(options.quorumKinds, 1, 6, 2);
+
+  const plan = planQuery({
+    query: options.query,
+    platforms: options.platforms,
+    hints: options.hints,
+    maxPlatforms: options.maxPlatforms,
+  });
+
+  const focus = plan.hintPlatforms.length > 0 ? plan.hintPlatforms : plan.explicitPlatforms;
+  const feedScope = focus.length > 0 ? focus : plan.platforms;
+  const feedOnly = feedScope.length > 0 && feedScope.every((id) => {
+    const def = PLATFORMS.get(id);
+    return def && def.list === true;
+  });
+  if (plan.query === '' && !feedOnly) throw new Error('缺少查询词');
+
+  const searchFn = options.deps && typeof options.deps.search === 'function' ? options.deps.search : runSearch;
+  const waves = planWaves(plan, { maxRounds, maxPlatforms: options.maxPlatforms });
+  const rounds = [];
+  const collected = [];
+  const seen = new Set();
+
+  const evaluate = () => {
+    const pack = packEvidence({
+      query: plan.query || '热点榜单',
+      results: collected,
+      platforms: [],
+      budgetChars: options.budgetChars,
+      maxItems: options.maxItems,
+      perPlatform: options.perPlatform,
+      excerptChars: options.excerptChars,
+    });
+    const platformsHit = new Set(pack.items.map((item) => item.platform)).size;
+    const kinds = new Set(pack.items.map((item) => item.kind)).size;
+    const topScore = pack.items.reduce((max, item) => Math.max(max, Number(item.score) || 0), 0);
+    const met = pack.items.length >= minItems && platformsHit >= quorumPlatforms && kinds >= quorumKinds;
+    return { pack, platformsHit, kinds, topScore, met };
+  };
+
+  const platformNotes = [];
+  let current = null;
+  for (let index = 0; index < waves.length; index += 1) {
+    const wave = waves[index];
+    const elapsed = Date.now() - started;
+    const remaining = budgetMs - elapsed;
+    if (index > 0 && remaining < 1500) {
+      rounds.push({ round: index + 1, variant: wave.variant, platforms: wave.platforms, why: wave.why, took: 0, skipped: 'budget' });
+      break;
+    }
+    const timeoutMs = Math.max(1500, Math.min(Number(options.timeoutMs) || 12000, remaining > 0 ? remaining : 3000));
+    const t0 = Date.now();
+    let search;
+    try {
+      search = await searchFn({
+        query: wave.variant,
+        platforms: wave.platforms,
+        limit: options.limit,
+        pages: options.pages,
+        timeoutMs,
+        proxy: options.proxy,
+        cookies: options.cookies,
+        defaultPlatforms: plan.platforms,
+        maxPlatforms: wave.platforms.length,
+      });
+    } catch (error) {
+      rounds.push({ round: index + 1, variant: wave.variant, platforms: wave.platforms, why: wave.why, took: Date.now() - t0, error: String((error && error.message) || error) });
+      continue;
+    }
+    let added = 0;
+    for (const item of (search && search.results) || []) {
+      if (!item || typeof item.url !== 'string' || item.url === '') continue;
+      const key = dedupeKey(item.url, item.title);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      collected.push(item);
+      added += 1;
+    }
+    for (const entry of (search && search.platforms) || []) {
+      if (entry && entry.note && (entry.status === 'blocked' || entry.status === 'error')) platformNotes.push(`${entry.label || entry.id}：${entry.note}`);
+    }
+    current = evaluate();
+    rounds.push({
+      round: index + 1,
+      variant: wave.variant,
+      why: wave.why,
+      platforms: wave.platforms,
+      added,
+      total: collected.length,
+      platformsHit: current.platformsHit,
+      kinds: current.kinds,
+      topScore: Number(current.topScore.toFixed(3)),
+      met: current.met,
+      took: Date.now() - t0,
+    });
+    if (current.met) break;
+  }
+
+  const final = current || evaluate();
+  const pack = final.pack;
+  pack.platformNotes = [...new Set([...pack.platformNotes, ...platformNotes])].slice(0, 8);
+  const took = Date.now() - started;
+  const quality = {
+    items: pack.items.length,
+    selected: pack.selected,
+    total: pack.total,
+    platforms: final.platformsHit,
+    kinds: final.kinds,
+    topScore: Number(final.topScore.toFixed(3)),
+    met: final.met,
+    minItems,
+    quorumPlatforms,
+    quorumKinds,
+  };
+  const text = [
+    formatEvidence(pack, { title: '研究报告' }).replace(/\n?$/, ''),
+    '',
+    `规划：${plan.intentLabel}（置信度 ${plan.confidence.toFixed(2)}）· 变体 ${plan.variants.length} 个 · 平台 ${plan.platforms.length} 个`,
+    `检索：${rounds.length} 轮 / ${took}ms · 累积 ${collected.length} 条 · 入选 ${quality.items} 条 · 覆盖 ${quality.platforms} 平台 / ${quality.kinds} 类型`,
+    `质量：${quality.met ? '达到门槛' : '未达门槛（结果可能不够，可放宽 minItems 或换平台）'}`,
+  ].join('\n');
+
+  return {
+    query: plan.query,
+    plan,
+    rounds,
+    pack,
+    quality,
+    met: quality.met,
+    took,
+    budgetMs,
+    text,
+  };
+}

@@ -31,6 +31,8 @@ import {
   formatEvidence,
   checkPlatforms,
   formatHealth,
+  planQuery,
+  research as runResearch,
 } from '../engines.js';
 
 const SERVER_NAME = 'web-scout';
@@ -281,6 +283,74 @@ async function toolEvidence(args) {
   };
 }
 
+async function toolResearch(args) {
+  const current = settings();
+  const query = typeof args.query === 'string' ? args.query.trim() : '';
+  const platformsInput = Array.isArray(args.platforms) && args.platforms.length > 0 ? args.platforms : ['auto'];
+  const platforms = resolvePlatforms(platformsInput, current.defaultPlatforms, []).slice(0, Math.min(14, current.maxPlatforms));
+  const budgetMs = Math.min(60000, Math.max(3000, Number(args.budgetMs) || 12000));
+  const maxRounds = Math.min(3, Math.max(1, Number(args.maxRounds) || 3));
+  const minItems = Math.min(20, Math.max(1, Number(args.minItems) || 6));
+  const quorumPlatforms = Math.min(8, Math.max(1, Number(args.quorumPlatforms) || 3));
+  const quorumKinds = Math.min(6, Math.max(1, Number(args.quorumKinds) || 2));
+  const limit = Math.min(30, Math.max(1, Number(args.limit) || current.limit));
+  const pages = Math.min(4, Math.max(1, Number(args.pages) || current.pages));
+  const plan = planQuery({ query, platforms, hints: [], maxPlatforms: current.maxPlatforms });
+  const key = [
+    'rs',
+    current.proxy || 'direct',
+    plan.query,
+    plan.platforms.join(','),
+    limit,
+    pages,
+    budgetMs,
+    maxRounds,
+    minItems,
+    quorumPlatforms,
+    quorumKinds,
+  ].join('::');
+  if (args.refresh === true) {
+    try { getCache().forget(`mcp::${key}`); } catch { /* ignore */ }
+  }
+  const outcome = await cachedSearch(
+    key,
+    () => runResearch({
+      query: plan.query,
+      platforms: plan.platforms,
+      budgetMs,
+      maxRounds,
+      minItems,
+      quorumPlatforms,
+      quorumKinds,
+      limit,
+      pages,
+      timeoutMs: Math.min(30000, Math.max(3000, Number(args.timeoutMs) || current.timeoutMs)),
+      proxy: current.proxy,
+      cookies: current.cookies,
+    }),
+    Math.min(24 * 60 * 60 * 1000, Math.max(60 * 1000, current.cacheTtlMs)),
+  );
+  const value = outcome.value;
+  return {
+    payload: {
+      query: value.query,
+      intent: value.plan && value.plan.intent,
+      variants: (value.plan && value.plan.variants ? value.plan.variants : []).map((item) => item.text),
+      platforms: value.plan ? value.plan.platforms : [],
+      rounds: value.rounds,
+      quality: value.quality,
+      met: value.met,
+      took: value.took,
+      budgetMs: value.budgetMs,
+      items: value.pack ? value.pack.items : [],
+      gaps: value.pack ? value.pack.gaps : [],
+      cached: outcome.cached,
+      cacheAgeMs: outcome.ageMs,
+    },
+    text: value.text,
+  };
+}
+
 async function toolHealth(args) {
   const current = settings();
   const report = await checkPlatforms({
@@ -365,6 +435,28 @@ const TOOLS = [
       additionalProperties: false,
     },
     run: toolEvidence,
+  },
+  {
+    name: 'web_scout_research',
+    description:
+      'Run a multi-round research job: plan the query (intent routing + query variants), search in waves, stop early once the quality quorum is met, and return an evidence pack plus a report. Best for open-ended questions that need several sources.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Question or keywords; may be empty only for hot-list platforms.' },
+        platforms: { type: 'array', items: { type: 'string' }, description: 'Starting platform ids; omit to let the planner route by intent.' },
+        budgetMs: { type: 'number', description: 'Wall-clock budget in ms (3000-60000, default 12000).' },
+        maxRounds: { type: 'number', description: 'Max search waves (1-3, default 3).' },
+        minItems: { type: 'number', description: 'Items needed to stop early (1-20, default 6).' },
+        quorumPlatforms: { type: 'number', description: 'Distinct platforms needed (1-8, default 3).' },
+        quorumKinds: { type: 'number', description: 'Distinct result kinds needed (1-6, default 2).' },
+        limit: { type: 'number', description: 'Raw results per platform per wave (1-30).' },
+        pages: { type: 'number', description: 'Pages per backend (1-4).' },
+        refresh: { type: 'boolean', description: 'Bypass cache.' },
+      },
+      additionalProperties: false,
+    },
+    run: toolResearch,
   },
   {
     name: 'web_scout_health',

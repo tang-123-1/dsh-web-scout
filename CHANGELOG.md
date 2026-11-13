@@ -2,6 +2,33 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
+## 1.18.0
+
+路线图第 3 层「查询改写与路由 + Research Mode」：先把问题理解成一个计划，再按波次检索，够了就停。
+
+### 新增
+
+- **查询规划器**（`engines.js` 的 `planQuery` / `planWaves`）：
+  - 意图判定（code / doc / academic / news / howto / compare / product / general），每类带一张平台路由表；查询里点名的站点排最前，其次显式 `platforms`，最后路由表。
+  - 查询变体：原始 → 中文技术词转英文（36 条词表）→ 带域名补 `site:` → 代码 token 就地加引号；去重、上限 4。
+  - 波次规划：主平台（前 4）→ 换说法（前 3）→ 补漏（其余）。
+- **研究模式**（`research`）：每波前查时间预算（剩余 <1.5 s 记 `skipped: budget`）、跨波 `dedupeKey` 去重、每波用证据包评估质量门槛（`items` / `quorumPlatforms` / `quorumKinds`），达标提前停；单波异常只记 `round.error`，不整体失败；返回 `rounds[]`、`quality`、`pack` 与 `text` 研究报告。
+- **接口**：`{"op":"plan"}` 与 `{"op":"research"}`（参数 `budgetMs` 3–60 s、`maxRounds` 1–3、`minItems`/`quorumPlatforms`/`quorumKinds`，缓存键含全部规划参数；空结果的报告不入缓存）。
+- **Agent 工具**：`web_scout_research`（共 6 个工具）。
+- **MCP 工具**：`web_scout_research`（共 6 个工具）。
+- **面板**：标题栏「研究」按钮，跑完把研究报告塞进输入框，并显示「N 轮 · 达标/未达标」。
+
+### 修复
+
+- 空查询 + 纯榜单平台曾被规划器掺入关键词引擎，导致整波 0 条：`planQuery` 在 `feedFocus` 时不掺路由表，`feedOnly` 改用 `hintPlatforms || explicitPlatforms` 判定。
+- 代码/文件 token 加引号时被挪到句首：改成就地替换；域名 token（TLD 白名单）不再被加引号。
+- 空研究报告会写进缓存导致 6 小时内一直「没结果」：只在 `quality.items > 0` 时 `cache.set`。
+
+### 测试
+
+- `verify-plan.mjs` 22/22、`verify-research.mjs` 16/16（离线注入 `deps.search`）、`verify-research-live.mjs` 11/11、`verify-mcp-118.mjs` 10/10。
+- 回归：`verify-mcp.mjs` 24/24、`verify-mcp-117.mjs` 11/11、`verify-mcp-robust.mjs` 10/10、`verify-mcp-tools.mjs` 7/7（读正文用例改本机可达的 `cn.bing.com`）。
+
 ## 1.17.0
 
 路线图第 2 层「读取与证据」+ 第 4 层「连通性一键测试」的一部分：把结果变成可引用的材料，并让「哪条通道现在能用」先看清楚。

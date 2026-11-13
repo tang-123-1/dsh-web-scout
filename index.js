@@ -10,6 +10,8 @@ import {
   formatEvidence,
   checkPlatforms,
   formatHealth,
+  planQuery,
+  research as runResearch,
   browserUrlFor,
   initProviders,
   providerCatalog,
@@ -545,6 +547,105 @@ export function apply(ctx, config = {}) {
           cached: false,
           sessionId: hint.id,
         };
+        cache.set(cacheKey, data, Math.min(86400000, Math.max(60000, Number(current.cacheTtlMs) || 21600000)));
+        return data;
+      },
+    }),
+  );
+
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'web_scout_research',
+      description:
+        'Run a multi-round research job: plan the query (intent routing + query variants), search in waves, stop early once the quality quorum is met, then return an evidence pack plus a research report. Use for open-ended questions that need several sources rather than one search.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Question or keywords; may be empty only for hot-list platforms.' },
+          platforms: { type: 'array', items: { type: 'string' }, description: 'Platform ids to start from; omit to let the planner route by intent.' },
+          budgetMs: { type: 'number', description: 'Wall-clock budget in ms (3000-60000, default 12000).' },
+          maxRounds: { type: 'number', description: 'Max search waves (1-3, default 3).' },
+          minItems: { type: 'number', description: 'Items needed to call it done (1-20, default 6).' },
+          quorumPlatforms: { type: 'number', description: 'Distinct platforms needed (1-8, default 3).' },
+          quorumKinds: { type: 'number', description: 'Distinct result kinds needed (1-6, default 2).' },
+          limit: { type: 'number', description: 'Raw results per platform per wave (1-30).' },
+          pages: { type: 'number', description: 'Pages per backend (1-4).' },
+          refresh: { type: 'boolean', description: 'Bypass cache.' },
+        },
+        additionalProperties: false,
+      },
+      output: {
+        schema: JSON_OBJECT,
+        render: (_args, value) => blocks((value && value.text) || value),
+      },
+      presentCall: (args) => ({ card: 'generic', title: `研究：${(args && (args.query || '(榜单)')) || '(榜单)'}`, kind: 'search', rawInput: args }),
+      presentResult: (_args, result) => {
+        const value = result && result.value ? result.value : {};
+        const quality = value.quality || {};
+        return {
+          card: 'web',
+          kind: 'search',
+          title: `研究报告：${quality.items || 0} 条 / ${(value.rounds || []).length} 轮 / ${quality.met ? '达标' : '未达标'}`,
+          sources: (value.pack && value.pack.items ? value.pack.items : []).slice(0, 8).map((item) => ({ url: item.url, title: item.title, snippet: item.excerpt })),
+          truncated: false,
+        };
+      },
+      execute: async (args, exec) => {
+        const options = args && typeof args === 'object' ? args : {};
+        const current = await settings();
+        const hint = transcript(ctx, exec);
+        const hinted = inferPlatforms(`${options.query || ''} ${conversationText(hint.messages).slice(-400)}`);
+        const platforms = resolvePlatforms(
+          options.platforms && options.platforms.length > 0 ? options.platforms : ['auto'],
+          current.defaultPlatforms,
+          hinted,
+        ).slice(0, current.maxPlatforms);
+        const feedOnly = platforms.length > 0 && platforms.every((id) => {
+          const def = PLATFORMS.get(id);
+          return Boolean(def && def.list === true);
+        });
+        let query = cleanQuery(options.query || '');
+        if (query === '' && hint.messages.length > 0 && !feedOnly) query = contextQuery(hint.messages, '');
+        const budgetMs = Math.min(60000, Math.max(3000, Number(options.budgetMs) || 12000));
+        const maxRounds = Math.min(3, Math.max(1, Number(options.maxRounds) || 3));
+        const minItems = Math.min(20, Math.max(1, Number(options.minItems) || 6));
+        const quorumPlatforms = Math.min(8, Math.max(1, Number(options.quorumPlatforms) || 3));
+        const quorumKinds = Math.min(6, Math.max(1, Number(options.quorumKinds) || 2));
+        const limit = Math.min(30, Math.max(1, Number(options.limit) || current.limit));
+        const pages = Math.min(4, Math.max(1, Number(options.pages) || current.pages || 3));
+        const plan = planQuery({ query, platforms, hints: hinted, maxPlatforms: current.maxPlatforms });
+        const cacheKey = [
+          'tool-rs1',
+          current.proxy || 'direct',
+          plan.query,
+          plan.platforms.join(','),
+          limit,
+          pages,
+          budgetMs,
+          maxRounds,
+          minItems,
+          quorumPlatforms,
+          quorumKinds,
+        ].join('::');
+        if (options.refresh !== true) {
+          const hit = cache.get(cacheKey);
+          if (hit) return { ...hit.value, cached: true, cacheAgeMs: hit.ageMs, sessionId: hint.id };
+        }
+        const result = await runResearch({
+          query: plan.query,
+          platforms: plan.platforms,
+          budgetMs,
+          maxRounds,
+          minItems,
+          quorumPlatforms,
+          quorumKinds,
+          limit,
+          pages,
+          timeoutMs: current.timeoutMs,
+          proxy: current.proxy || '',
+          cookies: current.cookies || {},
+        });
+        const data = { ...result, cached: false, sessionId: hint.id };
         cache.set(cacheKey, data, Math.min(86400000, Math.max(60000, Number(current.cacheTtlMs) || 21600000)));
         return data;
       },

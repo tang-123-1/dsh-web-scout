@@ -326,7 +326,29 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 
 ![体检状态点](docs/panel-health.png)
 
-### 五个工具（Agent 侧）
+### 查询规划与研究模式（v1.18）
+
+一个问题往往不是一个查询词能解决的。规划器先判断意图、改写查询、挑平台，研究模式再按波次打，够了就停：
+
+- **意图路由**：代码/报错 → GitHub、Stack Overflow、CSDN、掘金；文档/API → GitHub、Stack Overflow、CSDN、MDN；论文/研究 → Wikipedia、Stack Exchange、知乎；新闻/热榜 → 头条、微博热搜、百度热搜；教程/怎么做 → 知乎、CSDN、掘金、B 站；对比/选型 → 知乎、V2EX、CSDN；商品/价格 → 淘宝、京东、闲鱼；其余走通用。
+- **查询变体**：原始查询 → 中文技术词转英文（插件→plugin、报错→error…共 36 条）→ 查询里带域名时补 `site:` → 代码/文件名 token 加引号。最多 4 个，逐个去重。
+- **波次**：主平台（前 4 个）→ 换说法再来一轮（前 3 个）→ 剩余平台补漏；每波前先看时间预算，剩余不足 1.5 s 直接记 `skipped: budget`。
+- **质量门槛**：每波用证据包评估 `items >= minItems && 平台数 >= quorumPlatforms && 类型数 >= quorumKinds`，达标立刻停，不浪费请求。
+
+```jsonc
+// 面板：标题栏「研究」→ 报告直接进输入框
+{"op":"plan","query":"cordis 插件报错 403"}
+// → intent: "code"，platforms: ["github","stackoverflow","csdn","juejin"]，variants: 原始 + plugin/error
+
+{"op":"research","query":"cordis 插件","platforms":["csdn","v2ex"],"budgetMs":15000,
+ "minItems":6,"quorumPlatforms":3,"quorumKinds":2}
+// → rounds[{added,total,platformsHit,kinds,met,took}], quality, pack, text（研究报告）
+```
+
+报告＝证据包正文（评分摘录 + 覆盖面 + 缺口）＋三行机器可读的「规划 / 检索 / 质量」。
+只选榜单类平台时可以不填查询词；关键词检索仍然必须给 `query`。
+
+### 六个工具（Agent 侧）
 
 | 工具 | 参数 | 用途 |
 | --- | --- | --- |
@@ -335,6 +357,7 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | `web_scout_read` | `url` `maxChars?` | 抓正文（返回标题、正文、状态码、页内链接） |
 | `web_scout_evidence` | `query?` `platforms?` `budgetChars?` `maxItems?` `perPlatform?` `excerptChars?` `limit?` `pages?` `refresh?` | 证据包：评分摘录 + 覆盖面 + 缺口，直接喂模型 |
 | `web_scout_health` | `platforms?` `query?` `timeoutMs?` `deep?` | 连通性体检：哪些站现在能用、哪些被拦/需登录 |
+| `web_scout_research` | `query?` `platforms?` `budgetMs?` `maxRounds?` `minItems?` `quorumPlatforms?` `quorumKinds?` `limit?` `pages?` `refresh?` | 研究模式：规划 → 多波检索 → 质量门槛 → 研究报告 |
 
 ### HTTP 接口
 

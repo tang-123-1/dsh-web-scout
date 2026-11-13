@@ -13,6 +13,9 @@ import {
   formatEvidence,
   checkPlatforms,
   formatHealth,
+  planQuery,
+  planWaves,
+  research as runResearch,
   PLATFORMS,
 } from './engines.js';
 import { openInBrowser } from './open.js';
@@ -357,6 +360,113 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           count: packed.selected,
           top: packed.items.slice(0, 3).map((item) => ({ title: item.title, url: item.url })),
           origin: 'evidence',
+        });
+        return data;
+      }
+      case 'plan': {
+        const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : '';
+        let messages = [];
+        if (sessionId !== '' && typeof readMessages === 'function') {
+          try {
+            messages = readMessages(sessionId) || [];
+          } catch {
+            messages = [];
+          }
+        }
+        const context = typeof payload.context === 'string' ? payload.context : '';
+        const hinted = inferPlatforms(`${payload.query || ''} ${context}`);
+        let planQueryText = cleanQuery(payload.query || '');
+        if (planQueryText === '') planQueryText = contextQuery(messages, context);
+        const plan = planQuery({
+          query: planQueryText,
+          platforms: Array.isArray(payload.platforms) ? payload.platforms : [],
+          hints: hinted,
+          maxPlatforms: settings.maxPlatforms,
+        });
+        const waves = planWaves(plan, { maxRounds: payload.maxRounds, maxPlatforms: settings.maxPlatforms });
+        return { ...plan, waves, sessionId };
+      }
+      case 'research': {
+        const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : '';
+        let messages = [];
+        if (sessionId !== '' && typeof readMessages === 'function') {
+          try {
+            messages = readMessages(sessionId) || [];
+          } catch {
+            messages = [];
+          }
+        }
+        const context = typeof payload.context === 'string' ? payload.context : '';
+        const hinted = inferPlatforms(`${payload.query || ''} ${context} ${messages.slice(-6).map(messageText).join(' ').slice(-600)}`);
+        const platforms = resolvePlatforms(
+          payload.platforms && payload.platforms.length > 0 ? payload.platforms : ['auto'],
+          settings.defaultPlatforms,
+          hinted,
+        ).slice(0, settings.maxPlatforms);
+        let query = cleanQuery(payload.query || '');
+        const feedOnly = platforms.length > 0 && platforms.every((id) => {
+          const def = PLATFORMS.get(id);
+          return Boolean(def && def.list === true);
+        });
+        if (query === '' && messages.length > 0 && !feedOnly) query = contextQuery(messages, context);
+        if (query === '' && context !== '' && !feedOnly) query = cleanQuery(context).split(/\s+/).slice(0, 12).join(' ');
+        const budgetMs = Math.min(60000, Math.max(3000, Number(payload.budgetMs) || 12000));
+        const maxRounds = Math.min(3, Math.max(1, Number(payload.maxRounds) || 3));
+        const minItems = Math.min(20, Math.max(1, Number(payload.minItems) || 6));
+        const quorumPlatforms = Math.min(8, Math.max(1, Number(payload.quorumPlatforms) || 3));
+        const quorumKinds = Math.min(6, Math.max(1, Number(payload.quorumKinds) || 2));
+        const limit = Math.min(30, Math.max(1, Number(payload.limit) || settings.limit));
+        const pages = Math.min(4, Math.max(1, Number(payload.pages) || Number(settings.pages) || 3));
+        const timeoutMs = Math.min(30000, Math.max(3000, Number(payload.timeoutMs) || settings.timeoutMs));
+        const packOptions = {
+          budgetChars: Math.min(20000, Math.max(800, Number(payload.budgetChars) || 6000)),
+          maxItems: Math.min(20, Math.max(1, Number(payload.maxItems) || 10)),
+          perPlatform: Math.min(8, Math.max(1, Number(payload.perPlatform) || 3)),
+          excerptChars: Math.min(600, Math.max(80, Number(payload.excerptChars) || 240)),
+        };
+        const key = [
+          'rs1',
+          proxy || 'direct',
+          query,
+          platforms.join(','),
+          limit,
+          pages,
+          budgetMs,
+          maxRounds,
+          minItems,
+          quorumPlatforms,
+          quorumKinds,
+          JSON.stringify(packOptions),
+        ].join('::');
+        const cached = payload.refresh === true ? undefined : cache.get(key);
+        if (cached !== undefined) {
+          return { ...cached.value, cached: true, cacheAgeMs: cached.ageMs, cacheSource: cached.source };
+        }
+        const result = await runResearch({
+          query,
+          platforms,
+          budgetMs,
+          maxRounds,
+          minItems,
+          quorumPlatforms,
+          quorumKinds,
+          limit,
+          pages,
+          timeoutMs,
+          proxy,
+          cookies: settings.cookies || {},
+          ...packOptions,
+        });
+        const data = { ...result, sessionId, cached: false };
+        // 空结果不写缓存：一次风控/超时不该把 6 小时的查询钉成「没结果」。
+        if ((result.quality && result.quality.items) > 0) cache.set(key, data, ttlFrom(settings));
+        store.record({
+          at: new Date().toISOString(),
+          query: result.query,
+          platforms,
+          count: result.pack.selected,
+          top: result.pack.items.slice(0, 3).map((item) => ({ title: item.title, url: item.url })),
+          origin: 'research',
         });
         return data;
       }
