@@ -2,6 +2,27 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
+## 1.19.0
+
+一次功能审计后的瘦身：只删真正没人走到的路径，行为不变。
+
+### 移除
+
+- **检索历史**（`history` / `clear` 两个 op、`store.record()`、`clearHistory()`、`store` 里的 `history` 字段）。面板与工具从来没有读过它，属于只写不读的死数据，还让每次搜索多一次落盘。
+- **「本机导入」登录**（`login.import` op、面板按钮、`browserCookies.js` 里 Chromium/Firefox cookie 库解析约 200 行）。它要求先关掉浏览器（cookie 库被独占锁），实测每次都 EBUSY；现在登录只走「插件浏览器 → 读取登录」和「粘贴 Cookie」。`mergeCookies()` 保留。
+- `engines.js` 的 `MOBILE_UA`（未被引用）与 `searchEvidence()`（api 直接调 `runSearch` + `packEvidence`，这个包装没人用）。
+- `browserAuth.js` 的 `browserSessionInfo()`（被 `browserStatus()` 取代）与 `closeBrowserSession()`（没有任何调用方）。
+- 客户端四条死文案：`sites`、`importCookie`、`importShort`、`importing`（后者改用了已有的 `browserStarting`）。
+
+### 保留（有调用方，别误删）
+
+- `providers/registry.js` 的 `validateProvider`、`engines.js` 的 `PROVIDERS` / `PLATFORM_LIST` / `BACKENDS`、`store.js` 的 `SCOUT_DEFAULTS`：测试与外部 provider 依赖它们。
+- 46 个平台全部带 `backend` 或 `site`，没有「只是重复 bing」的空平台；`net.js` 的 `DEFAULT_UA` / `normalizeProxy` / `decodeBody` / `CookieJar` 只收起了 `export`，实现仍在用。
+
+### 验证
+
+- 离线：`verify-cache` 13/13、`verify-providers` 23/23、`verify-evidence` 19/19、`verify-plan` 22/22、`verify-research` 16/16、`verify-mcp` 24/24、`verify-mcp-117` 11/11、`verify-mcp-118` 10/10、`verify-mcp-robust` 10/10、`verify-mcp-tools` 7/7。
+- live：`search` / `evidence` / `research` / `health.check` / `login.status` 全部正常；删掉的 `history`、`clear`、`login.import` 三个 op 按预期报未知操作。
 ## 1.18.0
 
 路线图第 3 层「查询改写与路由 + Research Mode」：先把问题理解成一个计划，再按波次检索，够了就停。

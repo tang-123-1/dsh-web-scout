@@ -374,10 +374,9 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | `config` | `patch:{}` | 改代理 / 条数 / 默认平台等 |
 | `chips` | `chips:[]` | 保存芯片条 |
 | `platform.add` / `platform.remove` | `{name,url,site}` / `{id\|name}` | 自定义站点 |
-| `login.open` `login.browser` `login.capture` `login.import` `login.paste` `login.check` `login.clear` `login.status` | `platform` | 登录相关（见下） |
+| `login.open` `login.browser` `login.capture` `login.paste` `login.check` `login.clear` `login.status` | `platform` | 登录相关（见下） |
 | `browser.status` | — | 插件自管浏览器状态 |
 | `graph` | — | 自检：客户端包是否已进入 `__DSH_BOOT__` |
-| `history` / `clear` | — | 检索历史 |
 
 ## 平台与后端
 
@@ -452,7 +451,6 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | 入口 | 做什么 | 前提 |
 | --- | --- | --- |
 | **插件浏览器**（推荐） | 用独立 profile 拉起 Edge/Chrome，通过 CDP 读 cookie | 无需关浏览器 |
-| 本机导入 | 读 Edge/Chrome/Firefox 的 cookie 数据库 | **必须先关掉浏览器**（库被独占锁） |
 | 粘贴 Cookie | 手动粘 `SESSIONID=...; z_c0=...` | 需要知道 cookie 名 |
 | 检查 / 清除 | 用站点探针校验、或清空该站 cookie | — |
 
@@ -501,7 +499,7 @@ Cookie 存在 `~/.dsh/web-scout.json` 的 `cookies` 字段里，**不要提交�
 三个开关：`limit`（每源条数）、`pages`（翻页数）、`maxPlatforms`（参与源数）。默认 `12/3/10`；拉到 `20/4/14` 大约能到 100–120 条（更多源不一定更好，噪音也会变多）。
 
 **「知乎推荐」显示需要登录？**
-知乎信息流走后端接口，必须有 `z_c0` 登录 cookie。点「登录与账号 → 插件浏览器」登录一次，再点「读取登录」；用「本机导入」也行，但要先关掉浏览器（cookie 库被独占锁）。
+知乎信息流走后端接口，必须有 `z_c0` 登录 cookie。点「登录与账号 → 插件浏览器」登录一次，再点「读取登录」即可。
 
 **安全吗？**
 插件只做三件事：发 HTTP 请求、起一个独立 profile 的浏览器读 cookie、用系统默认浏览器打开链接。没有遥测，不上传任何数据；cookie 只存在本地配置文件里。

@@ -5,13 +5,13 @@ import tls from 'node:tls';
 import zlib from 'node:zlib';
 import { URL } from 'node:url';
 
-export const DEFAULT_UA =
+const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 const ACCEPT_HTML = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
 const ACCEPT_JSON = 'application/json,text/plain,*/*';
 
-export function normalizeProxy(raw) {
+function normalizeProxy(raw) {
   if (typeof raw !== 'string') return undefined;
   const value = raw.trim();
   if (value === '') return undefined;
@@ -35,7 +35,7 @@ export function normalizeProxy(raw) {
 // cookies
 // ---------------------------------------------------------------------------
 
-export class CookieJar {
+class CookieJar {
   constructor(initial) {
     this.store = new Map();
     if (initial && typeof initial === 'object') {
@@ -177,7 +177,7 @@ function charsetOf(buffer, contentType) {
   return 'utf-8';
 }
 
-export function decodeBody(buffer, contentType) {
+function decodeBody(buffer, contentType) {
   const charset = charsetOf(buffer, contentType);
   const normalized =
     charset === 'gb2312' || charset === 'gbk' || charset === 'gb18030' ? 'gbk' : charset === 'utf8' ? 'utf-8' : charset;

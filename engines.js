@@ -2498,26 +2498,6 @@ export function formatEvidence(pack, options = {}) {
 }
 
 /** 跑一次搜索然后直接出证据包（给面板/MCP 用，缓存由调用方负责）。 */
-export async function searchEvidence(options = {}) {
-  const search = await runSearch(options);
-  const pack = packEvidence({
-    query: search.query,
-    results: search.results,
-    platforms: search.platforms,
-    budgetChars: options.budgetChars,
-    maxItems: options.maxItems,
-    perPlatform: options.perPlatform,
-    excerptChars: options.excerptChars,
-  });
-  return { ...pack, mode: search.mode, tunnelSuggested: search.tunnelSuggested, text: formatEvidence(pack) };
-}
-
-// ---------------------------------------------------------------- 连通性体检（v1.17）
-/**
- * 逐个平台真打一次，给出「现在到底哪些能搜」。
- * 只探测有原生通道的平台（backend / url / 外部 provider），纯 site: 兜底平台标 site 跳过——
- * 它们依赖 bing/so360，而那两个本身就在探测列表里。
- */
 export async function checkPlatforms(options = {}) {
   const timeoutMs = Math.min(20000, Math.max(2000, Number(options.timeoutMs) || 8000));
   const query = String(options.query || 'cordis').trim() || 'cordis';
@@ -2643,7 +2623,6 @@ export function browserUrlFor(platformId, query) {
   return `https://www.bing.com/search?q=${enc(query)}`;
 }
 
-export const MOBILE_UA = UA_MOBILE;
 
 // ---------------------------------------------------------------- 查询规划 + 研究模式（v1.18）
 

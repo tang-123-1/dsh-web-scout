@@ -54,7 +54,6 @@ window.__ModuleLoader__.load({
         longHint: '查询取自上一条对话内容；想更精准可以在上方输入更短的关键词再搜一次。',
         dragHint: '按住这里拖动面板',
         resizeHint: '拖动右下角改变大小',
-        sites: '站点',
         more: '站点',
         picker: '选择平台（点一下加入或移除，最多 10 个）',
         addSite: '添加站点',
@@ -87,9 +86,6 @@ window.__ModuleLoader__.load({
         remove: '删除',
         loginSection: '登录与账号',
         login: '登录',
-        importing: '导入中…',
-        importCookie: '导入登录状态',
-        importShort: '本机导入',
         browserLogin: '插件浏览器',
         captureLogin: '读取登录',
         browserStarting: '正在拉起插件浏览器…',
@@ -103,7 +99,7 @@ window.__ModuleLoader__.load({
         loggedIn: '已登录',
         notLoggedIn: '未登录',
         noLogin: '未导入',
-        loginHint: '点「插件浏览器」弹出一个独立 profile 的窗口，在里面登录一次，回来点「读取登录」就能读到（浏览器开着也能读）。「本机导入」是直接抓 Edge/Chrome 的 cookie 库，需要先关掉浏览器。',
+        loginHint: '点「插件浏览器」弹出一个独立 profile 的窗口，在里面登录一次，回来点「读取登录」就能读到（浏览器开着也能读）。',
         customGroup: '自定义站点',
         stale: '插件已更新到磁盘：重启一次 DeepSeek Harness 后「站点」和「登录」才会生效。',
       },
@@ -150,7 +146,6 @@ window.__ModuleLoader__.load({
         longHint: 'Query derived from the previous message — type a shorter keyword above to refine.',
         dragHint: 'Drag here to move the panel',
         resizeHint: 'Drag the corner to resize',
-        sites: 'Sites',
         more: 'Sites',
         picker: 'Tap to add or remove (up to 10)',
         addSite: 'Add a site',
@@ -183,9 +178,6 @@ window.__ModuleLoader__.load({
         remove: 'Remove',
         loginSection: 'Sign-in & accounts',
         login: 'Sign in',
-        importing: 'Importing…',
-        importCookie: 'Import session',
-        importShort: 'Local import',
         browserLogin: 'Plugin browser',
         captureLogin: 'Read login',
         browserStarting: 'Launching the plugin browser…',
@@ -1014,18 +1006,6 @@ function statusStyle(status) {
         noteFor(platform, `${who}｜${value.note || ''}${via}${extra}`);
       };
 
-      const doImport = async (platform) => {
-        setBusyId(`import:${platform}`);
-        noteFor(platform, t('importing'));
-        try {
-          finishLogin(platform, await post('login.import', { platform }));
-        } catch (failure) {
-          noteFor(platform, String((failure && failure.message) || failure));
-        } finally {
-          setBusyId('');
-        }
-      };
-
       const doCheck = async (platform) => {
         setBusyId(`check:${platform}`);
         try {
@@ -1650,14 +1630,9 @@ function statusStyle(status) {
                         h(
                           'button',
                           { type: 'button', style: S.miniAction, disabled: busyHere, onClick: () => doBrowserLogin(item.id) },
-                          busyHere ? t('importing') : t('browserLogin'),
+                          busyHere ? t('browserStarting') : t('browserLogin'),
                         ),
                         h('button', { type: 'button', style: S.miniAction, disabled: busyHere, onClick: () => doCapture(item.id) }, t('captureLogin')),
-                        h(
-                          'button',
-                          { type: 'button', style: S.miniAction, disabled: busyHere, onClick: () => doImport(item.id) },
-                          t('importShort'),
-                        ),
                         h('button', { type: 'button', style: S.miniAction, disabled: busyHere, onClick: () => doCheck(item.id) }, t('check')),
                         h('button', { type: 'button', style: S.miniAction, onClick: () => doClear(item.id) }, t('clearLogin')),
                         h(

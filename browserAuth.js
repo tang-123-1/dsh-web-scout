@@ -278,28 +278,6 @@ export async function captureBrowserCookies(options = {}) {
   };
 }
 
-export function browserSessionInfo() {
-  const state = readState();
-  if (!state) return { running: false, profile: profileDir(), browser: findBrowser() };
-  return { running: true, profile: profileDir(), browser: findBrowser(), ...state };
-}
-
-export async function closeBrowserSession() {
-  const state = readState();
-  if (!state || !state.port) return { closed: false };
-  const version = await cdpVersion(state.port);
-  if (!version || !version.webSocketDebuggerUrl) {
-    writeState({ ...state, port: 0, at: new Date().toISOString() });
-    return { closed: false };
-  }
-  try {
-    await cdpCall(version.webSocketDebuggerUrl, 'Browser.close', {});
-  } catch {
-    /* ignore */
-  }
-  writeState({ ...state, port: 0, at: new Date().toISOString() });
-  return { closed: true };
-}
 export async function browserStatus() {
   const base = { profile: profileDir(), browser: findBrowser() };
   const state = readState();

@@ -363,15 +363,6 @@ export function apply(ctx, config = {}) {
           proxy: current.proxy || undefined,
           cookies: current.cookies || {},
         });
-        store.record({
-          at: new Date().toISOString(),
-          query: result.query,
-          platforms: result.platforms.map((entry) => entry.id),
-          count: result.results.length,
-          top: result.results.slice(0, 3).map((item) => ({ title: item.title, url: item.url })),
-          origin: 'tool',
-          session: hint.id,
-        });
         const opened = options.open === true ? openInBrowser(firstBrowserUrl(result) || result.platforms[0]?.browser || 'https://www.bing.com') : undefined;
         const payloadOut = {
           query: result.query,

@@ -21,7 +21,6 @@ const DEFAULTS = {
   customPlatforms: [],
   cookies: {},
   accounts: {},
-  history: [],
 };
 
 function configDir() {
@@ -60,7 +59,6 @@ function normalize(raw) {
     out.defaultPlatforms = isLegacy ? [...DEFAULTS.defaultPlatforms] : list;
   }
   out.version = Number.isFinite(Number(value.version)) ? Math.max(0, Math.round(Number(value.version))) : 0;
-  if (Array.isArray(value.history)) out.history = value.history.slice(0, 60);
   if (Array.isArray(value.chips)) out.chips = value.chips.map((item) => String(item)).slice(0, 12);
   if (Array.isArray(value.customPlatforms)) {
     out.customPlatforms = value.customPlatforms
@@ -129,7 +127,7 @@ export class ScoutStore {
   }
 
   snapshot() {
-    return { ...this.state, history: this.state.history.slice(0, 20) };
+    return { ...this.state };
   }
 
   get(key) {
@@ -138,19 +136,6 @@ export class ScoutStore {
 
   patch(patch) {
     this.state = normalize({ ...this.state, ...(patch || {}) });
-    this.schedule();
-    return this.snapshot();
-  }
-
-  record(entry) {
-    const rows = Array.isArray(this.state.history) ? this.state.history.filter((item) => item && item.query !== entry.query) : [];
-    rows.unshift(entry);
-    this.state.history = rows.slice(0, 40);
-    this.schedule();
-  }
-
-  clearHistory() {
-    this.state.history = [];
     this.schedule();
     return this.snapshot();
   }

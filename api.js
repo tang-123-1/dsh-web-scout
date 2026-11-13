@@ -19,7 +19,7 @@ import {
   PLATFORMS,
 } from './engines.js';
 import { openInBrowser } from './open.js';
-import { importBrowserCookies, mergeCookies } from './browserCookies.js';
+import { mergeCookies } from './browserCookies.js';
 import { checkLogin, loginTarget, cookieMapFromPaste, cookiesForDomain } from './login.js';
 import { ensureBrowserSession, captureBrowserCookies, browserStatus } from './browserAuth.js';
 import { createCache } from './cache.js';
@@ -257,14 +257,6 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           cookies: settings.cookies || {},
         });
         cache.set(key, result, ttlFrom(settings));
-        store.record({
-          at: new Date().toISOString(),
-          query: result.query,
-          platforms: result.platforms.map((entry) => entry.id),
-          count: result.results.length,
-          top: result.results.slice(0, 3).map((item) => ({ title: item.title, url: item.url })),
-          origin: 'dock',
-        });
         const data = summarize(result);
         data.cached = false;
         if (payload.open === true) {
@@ -353,14 +345,6 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           cached: false,
         };
         cache.set(key, data, ttlFrom(settings));
-        store.record({
-          at: new Date().toISOString(),
-          query: result.query,
-          platforms: platforms,
-          count: packed.selected,
-          top: packed.items.slice(0, 3).map((item) => ({ title: item.title, url: item.url })),
-          origin: 'evidence',
-        });
         return data;
       }
       case 'plan': {
@@ -460,14 +444,6 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         const data = { ...result, sessionId, cached: false };
         // 空结果不写缓存：一次风控/超时不该把 6 小时的查询钉成「没结果」。
         if ((result.quality && result.quality.items) > 0) cache.set(key, data, ttlFrom(settings));
-        store.record({
-          at: new Date().toISOString(),
-          query: result.query,
-          platforms,
-          count: result.pack.selected,
-          top: result.pack.items.slice(0, 3).map((item) => ({ title: item.title, url: item.url })),
-          origin: 'research',
-        });
         return data;
       }
       case 'health.check': {
@@ -485,12 +461,6 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
       }
       case 'config': {
         return store.patch(payload.patch || {});
-      }
-      case 'history': {
-        return { history: settings.history.slice(0, Math.max(1, Math.min(40, Number(payload.limit) || 12))) };
-      }
-      case 'clear': {
-        return store.clearHistory();
       }
       case 'provider.list': {
         const state = providerBridge && typeof providerBridge.state === 'function' ? providerBridge.state() : { report: null, error: '' };
@@ -562,30 +532,7 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         return {
           ...openInBrowser(target.url),
           target,
-          hint: '已在系统浏览器打开登录页。登录完想在插件里生效：点「本机导入」（要先关掉浏览器）或「插件浏览器」在插件窗口里再登一次。',
-        };
-      }
-      case 'login.import': {
-        const target = loginTarget(String(payload.platform || ''));
-        if (!target) throw new Error(`未知平台：${payload.platform}`);
-        if (target.domain === '') throw new Error('这个站点没有可识别的域名，无法导入登录状态');
-        const imported = importBrowserCookies(target.domain);
-        const merged = mergeCookies(settings.cookies || {}, imported.cookies);
-        if (Object.keys(imported.cookies).length > 0) store.patch({ cookies: merged });
-        const verdict = await verify(target.id);
-        const lockedLabels = imported.locked.map((item) => item.label).join('/');
-        return {
-          ...verdict,
-          imported: imported.sources,
-          errors: imported.errors.slice(0, 4),
-          found: Object.keys(imported.cookies).length,
-          locked: imported.locked,
-          hint:
-            Object.keys(imported.cookies).length > 0
-              ? ''
-              : lockedLabels !== ''
-                ? `${lockedLabels} 正在运行，cookie 库被锁住了：全部关掉浏览器窗口后再点一次「导入登录状态」，或者在下面直接粘贴 Cookie`
-                : '浏览器里没找到这个站点的登录 cookie，先在浏览器登录一次再导入',
+          hint: '已在系统浏览器打开登录页。想让插件用上这个登录态：点「插件浏览器」在插件自己的窗口里再登一次，回来点「读取登录」。',
         };
       }
       case 'login.paste': {
