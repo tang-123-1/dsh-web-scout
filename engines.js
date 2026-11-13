@@ -532,6 +532,9 @@ export function platformCatalog() {
     custom: item.custom === true,
     list: item.list === true,
     kind: kindOf(item),
+    // v1.22：这类平台没有可抓取的服务端搜索，搜索时直接给站内入口（0 ms，不再白跑 site:）。
+    entryOnly: item.entryOnly === true,
+    lang: item.lang || '',
     source: item.providerSource || (item.custom ? 'custom' : 'builtin'),
   }));
 }
