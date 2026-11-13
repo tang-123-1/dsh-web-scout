@@ -500,6 +500,40 @@ node scripts/selftest.mjs --heavy   # 58 项，额外拉起系统浏览器和插
 
 > 补一句实话：剩下的 empty 平台（博客园、开源中国、Gitee、少数派、微博、小红书、淘宝、京东、1688、闲鱼、抖音、PyPI、Medium、YouTube、Reddit、Hacker News、Stack Overflow、亚马逊）**在当前网络下拿不到服务端结果**——要么站点强制 JS 渲染，要么要登录/签名。它们会稳定返回一条「站内搜索入口」，点开就是该站自己的搜索页。
 
+## 空白站点治理（v1.22.0）
+
+「空白站点」指那些**拿不到服务端搜索结果**的平台。这轮做的是两件事：能救的救回来，救不了的别再假装在救。
+
+### 1. 英文站点自动换语言
+
+Stack Overflow、Hacker News、PyPI、Medium、Reddit、YouTube、Amazon 对中文查询基本零命中（实测 Stack Exchange API 用 `cordis 插件` 返回 0 条，用 `cordis plugin` 返回正常结果）。现在这类平台带 `lang: 'en'`，查询含中文时自动换成拉丁变体（中文技术词 → 英文，保留原有的英文/数字 token）：
+
+```
+cordis 插件 报错  →  plugin error cordis   （只在这类平台上生效）
+```
+
+顺带把 Stack Overflow / Hacker News 的 `needsTunnel` 去掉——它们的 API 本身在本机可达，之前被误标成「需要代理」，导致超时截断到 6 秒还误报。
+
+### 2. 没有服务端搜索的站点：直接给入口，不再白等
+
+15 个平台标了 `entryOnly: true`：1688、亚马逊、博客园、Gitee、京东、开源中国、少数派、微博、闲鱼、小红书、抖音、Medium、PyPI、YouTube、Reddit。
+
+以前每次搜索都会为它们**跑一遍搜索引擎的 site: 查询**（必应中文站忽略 site:，等于白跑约 0.7 秒，还拿到一堆无关结果）。现在直接返回一条「在 XX 里直接搜索「关键词」」的入口行：
+
+| 之前 | 现在 |
+| --- | --- |
+| `empty` + 700–900 ms + note「站点内没抓到正文结果」 | `empty` + **0–1 ms** + note「该站点没有可抓取的服务端搜索（浏览器渲染/需要签名），已给站内入口」 |
+
+### 3. 慢平台加了超时上限
+
+淘宝 14.2 s、今日头条 10.7 s 会拖住整轮搜索，现在按平台封顶：淘宝/头条 9 s、V2EX/微信 7 s、Stack Overflow 9 s、Hacker News 8 s。超出就按超时降级，不再让一个站点决定整次搜索的耗时。
+
+### 4. 体检怎么看
+
+面板「站点 → 体检」或 `POST /web-scout/api {"op":"health.check","platforms":["jd","douyin"]}`，返回里 `skipped` 会区分 `unknown`（id 不存在）与 `site-fallback`（纯站内平台，默认不真打，`deep:true` 才打）。
+
+想自己确认「这个站点到底能不能服务端搜」，就看 note：出现「没有可抓取的服务端搜索」就是实话说——它在当前网络下确实搜不出来，点开站内搜索页是唯一正确的用法。
+
 ## 登录状态
 
 插件的检索和读页面都用同一个 cookie jar，所以「搜到的内容和你浏览器里看到的一样」取决于有没有登录态。

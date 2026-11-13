@@ -225,43 +225,43 @@ export const PLATFORM_LIST = [
   { id: 'zhihufollow', zh: '知乎关注', en: 'Zhihu Following', group: 'social', backend: 'zhihu-follow', list: true, needsLogin: 'zhihu', browser: () => 'https://www.zhihu.com/follow' },
   { id: 'csdn', zh: 'CSDN', en: 'CSDN', group: 'cn', backend: 'csdn', browser: (q) => `https://so.csdn.net/so/search?q=${enc(q)}` },
   { id: 'juejin', zh: '掘金', en: 'Juejin', group: 'cn', backend: 'juejin', browser: (q) => `https://juejin.cn/search?query=${enc(q)}` },
-  { id: 'cnblogs', zh: '博客园', en: 'Cnblogs', group: 'cn', site: 'cnblogs.com', browser: (q) => `https://zzk.cnblogs.com/s?w=${enc(q)}` },
+  { id: 'cnblogs', zh: '博客园', en: 'Cnblogs', group: 'cn', site: 'cnblogs.com', entryOnly: true, browser: (q) => `https://zzk.cnblogs.com/s?w=${enc(q)}` },
   { id: 'segmentfault', zh: '思否', en: 'SegmentFault', group: 'cn', backend: 'segmentfault', site: 'segmentfault.com', browser: (q) => `https://segmentfault.com/search?q=${enc(q)}` },
-  { id: 'oschina', zh: '开源中国', en: 'OSChina', group: 'cn', site: 'oschina.net', browser: (q) => `https://www.oschina.net/search?scope=all&q=${enc(q)}` },
-  { id: 'gitee', zh: 'Gitee', en: 'Gitee', group: 'cn', site: 'gitee.com', browser: (q) => `https://search.gitee.com/?skin=rec&type=repository&q=${enc(q)}` },
+  { id: 'oschina', zh: '开源中国', en: 'OSChina', group: 'cn', site: 'oschina.net', entryOnly: true, browser: (q) => `https://www.oschina.net/search?scope=all&q=${enc(q)}` },
+  { id: 'gitee', zh: 'Gitee', en: 'Gitee', group: 'cn', site: 'gitee.com', entryOnly: true, browser: (q) => `https://search.gitee.com/?skin=rec&type=repository&q=${enc(q)}` },
   { id: 'bilibili', zh: '哔哩哔哩', en: 'Bilibili', group: 'video', backend: 'bilibili', site: 'bilibili.com', browser: (q) => `https://search.bilibili.com/all?keyword=${enc(q)}` },
   // 抖音 PC 端首页现在统一跳「精选」，站内搜索请走 search 页（带 type=video，不会落回精选首页）。
-  { id: 'douyin', zh: '抖音', en: 'Douyin', group: 'video', site: 'douyin.com', browser: (q) => `https://www.douyin.com/search/${enc(q)}?type=video&source=normal_search` },
+  { id: 'douyin', zh: '抖音', en: 'Douyin', group: 'video', site: 'douyin.com', entryOnly: true, browser: (q) => `https://www.douyin.com/search/${enc(q)}?type=video&source=normal_search` },
   { id: 'douyinhot', zh: '抖音热榜', en: 'Douyin Hot', group: 'video', backend: 'douyin-hot', list: true, browser: () => 'https://www.douyin.com/hot' },
   { id: 'weibohot', zh: '微博热搜', en: 'Weibo Hot', group: 'social', backend: 'weibo-hot', list: true, browser: () => 'https://s.weibo.com/top/summary' },
   { id: 'bilihot', zh: 'B站热门', en: 'Bilibili Popular', group: 'video', backend: 'bili-hot', list: true, browser: () => 'https://www.bilibili.com/v/popular/rank/all' },
   { id: 'zhihuhot', zh: '知乎热榜', en: 'Zhihu Hot', group: 'social', backend: 'zhihu-hot', list: true, needsLogin: 'zhihu', browser: () => 'https://www.zhihu.com/hot' },
   { id: 'baiduhot', zh: '百度热搜', en: 'Baidu Hot', group: 'general', backend: 'baidu-hot', list: true, browser: () => 'https://top.baidu.com/board?tab=realtime' },
   { id: 'toutiaohot', zh: '头条热榜', en: 'Toutiao Hot', group: 'general', backend: 'toutiao-hot', list: true, browser: () => 'https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc' },
-  { id: 'youtube', zh: 'YouTube', en: 'YouTube', group: 'video', site: 'youtube.com', browser: (q) => `https://www.youtube.com/results?search_query=${enc(q)}`, needsTunnel: true },
-  { id: 'xiaohongshu', zh: '小红书', en: 'Xiaohongshu', group: 'social', site: 'xiaohongshu.com', browser: (q) => `https://www.xiaohongshu.com/search_result?keyword=${enc(q)}` },
-  { id: 'weibo', zh: '微博', en: 'Weibo', group: 'social', site: 'weibo.com', browser: (q) => `https://s.weibo.com/weibo?q=${enc(q)}` },
-  { id: 'toutiao', zh: '今日头条', en: 'Toutiao', group: 'social', backend: 'toutiao', site: 'toutiao.com', browser: (q) => `https://so.toutiao.com/search?keyword=${enc(q)}` },
-  { id: 'weixin', zh: '微信', en: 'WeChat', group: 'social', backend: 'weixin', browser: (q) => `https://weixin.sogou.com/weixin?type=2&query=${enc(q)}` },
-  { id: 'v2ex', zh: 'V2EX', en: 'V2EX', group: 'cn', backend: 'v2ex', site: 'v2ex.com', browser: (q) => `https://www.sov2ex.com/?q=${enc(q)}` },
-  { id: 'reddit', zh: 'Reddit', en: 'Reddit', group: 'social', site: 'reddit.com', browser: (q) => `https://www.reddit.com/search/?q=${enc(q)}`, needsTunnel: true },
+  { id: 'youtube', zh: 'YouTube', en: 'YouTube', group: 'video', site: 'youtube.com', browser: (q) => `https://www.youtube.com/results?search_query=${enc(q)}`, lang: 'en', entryOnly: true, needsTunnel: true },
+  { id: 'xiaohongshu', zh: '小红书', en: 'Xiaohongshu', group: 'social', site: 'xiaohongshu.com', entryOnly: true, browser: (q) => `https://www.xiaohongshu.com/search_result?keyword=${enc(q)}` },
+  { id: 'weibo', zh: '微博', en: 'Weibo', group: 'social', site: 'weibo.com', entryOnly: true, browser: (q) => `https://s.weibo.com/weibo?q=${enc(q)}` },
+  { id: 'toutiao', zh: '今日头条', en: 'Toutiao', group: 'social', backend: 'toutiao', site: 'toutiao.com', timeoutCap: 9000, browser: (q) => `https://so.toutiao.com/search?keyword=${enc(q)}` },
+  { id: 'weixin', zh: '微信', en: 'WeChat', group: 'social', backend: 'weixin', timeoutCap: 7000, browser: (q) => `https://weixin.sogou.com/weixin?type=2&query=${enc(q)}` },
+  { id: 'v2ex', zh: 'V2EX', en: 'V2EX', group: 'cn', backend: 'v2ex', site: 'v2ex.com', timeoutCap: 7000, browser: (q) => `https://www.sov2ex.com/?q=${enc(q)}` },
+  { id: 'reddit', zh: 'Reddit', en: 'Reddit', group: 'social', site: 'reddit.com', browser: (q) => `https://www.reddit.com/search/?q=${enc(q)}`, lang: 'en', entryOnly: true, needsTunnel: true },
 
   { id: 'github', zh: 'GitHub', en: 'GitHub', group: 'dev', backend: 'github', browser: (q) => `https://github.com/search?q=${enc(q)}&type=repositories` },
-  { id: 'stackoverflow', zh: 'Stack Overflow', en: 'Stack Overflow', group: 'dev', backend: 'stackexchange', browser: (q) => `https://stackoverflow.com/search?q=${enc(q)}`, needsTunnel: true },
-  { id: 'npm', zh: 'npm', en: 'npm', group: 'dev', backend: 'npm', browser: (q) => `https://www.npmjs.com/search?q=${enc(q)}` },
-  { id: 'hackernews', zh: 'Hacker News', en: 'Hacker News', group: 'dev', backend: 'hackernews', browser: (q) => `https://hn.algolia.com/?q=${enc(q)}`, needsTunnel: true },
+  { id: 'stackoverflow', zh: 'Stack Overflow', en: 'Stack Overflow', group: 'dev', backend: 'stackexchange', lang: 'en', timeoutCap: 9000, browser: (q) => `https://stackoverflow.com/search?q=${enc(q)}` },
+  { id: 'npm', zh: 'npm', en: 'npm', group: 'dev', backend: 'npm', lang: 'en', browser: (q) => `https://www.npmjs.com/search?q=${enc(q)}` },
+  { id: 'hackernews', zh: 'Hacker News', en: 'Hacker News', group: 'dev', backend: 'hackernews', lang: 'en', timeoutCap: 8000, browser: (q) => `https://hn.algolia.com/?q=${enc(q)}` },
   { id: 'mdn', zh: 'MDN 文档', en: 'MDN', group: 'dev', backend: 'mdn', site: 'developer.mozilla.org', browser: (q) => `https://developer.mozilla.org/zh-CN/search?q=${enc(q)}` },
-  { id: 'pypi', zh: 'PyPI', en: 'PyPI', group: 'dev', site: 'pypi.org', browser: (q) => `https://pypi.org/search/?q=${enc(q)}`, needsTunnel: true },
+  { id: 'pypi', zh: 'PyPI', en: 'PyPI', group: 'dev', site: 'pypi.org', browser: (q) => `https://pypi.org/search/?q=${enc(q)}`, lang: 'en', entryOnly: true, needsTunnel: true },
   { id: 'wikipedia', zh: '维基百科', en: 'Wikipedia', group: 'dev', backend: 'wikipedia', browser: (q) => `https://zh.wikipedia.org/w/index.php?search=${enc(q)}`, needsTunnel: true },
 
-  { id: 'taobao', zh: '淘宝', en: 'Taobao', group: 'shop', site: 'item.taobao.com', browser: (q) => `https://s.taobao.com/search?q=${enc(q)}` },
-  { id: 'jd', zh: '京东', en: 'JD', group: 'shop', site: 'jd.com', browser: (q) => `https://search.jd.com/Search?keyword=${enc(q)}` },
-  { id: '1688', zh: '1688', en: '1688', group: 'shop', site: '1688.com', browser: (q) => `https://s.1688.com/selloffer/offer_search.htm?keywords=${enc(q)}` },
-  { id: 'amazon', zh: '亚马逊', en: 'Amazon', group: 'shop', site: 'amazon.com', browser: (q) => `https://www.amazon.com/s?k=${enc(q)}`, needsTunnel: true },
-  { id: 'xianyu', zh: '闲鱼', en: 'Xianyu', group: 'shop', site: 'goofish.com', browser: (q) => `https://www.goofish.com/search?q=${enc(q)}` },
+  { id: 'taobao', zh: '淘宝', en: 'Taobao', group: 'shop', site: 'item.taobao.com', timeoutCap: 9000, browser: (q) => `https://s.taobao.com/search?q=${enc(q)}` },
+  { id: 'jd', zh: '京东', en: 'JD', group: 'shop', site: 'jd.com', entryOnly: true, browser: (q) => `https://search.jd.com/Search?keyword=${enc(q)}` },
+  { id: '1688', zh: '1688', en: '1688', group: 'shop', site: '1688.com', entryOnly: true, browser: (q) => `https://s.1688.com/selloffer/offer_search.htm?keywords=${enc(q)}` },
+  { id: 'amazon', zh: '亚马逊', en: 'Amazon', group: 'shop', site: 'amazon.com', browser: (q) => `https://www.amazon.com/s?k=${enc(q)}`, lang: 'en', entryOnly: true, needsTunnel: true },
+  { id: 'xianyu', zh: '闲鱼', en: 'Xianyu', group: 'shop', site: 'goofish.com', entryOnly: true, browser: (q) => `https://www.goofish.com/search?q=${enc(q)}` },
   { id: 'douban', zh: '豆瓣', en: 'Douban', group: 'content', backend: 'douban', site: 'douban.com', browser: (q) => `https://www.douban.com/search?q=${enc(q)}` },
-  { id: 'sspai', zh: '少数派', en: 'SSPAI', group: 'content', site: 'sspai.com', browser: (q) => `https://sspai.com/search/post/${enc(q)}` },
-  { id: 'medium', zh: 'Medium', en: 'Medium', group: 'content', site: 'medium.com', browser: (q) => `https://medium.com/search?q=${enc(q)}`, needsTunnel: true },
+  { id: 'sspai', zh: '少数派', en: 'SSPAI', group: 'content', site: 'sspai.com', entryOnly: true, browser: (q) => `https://sspai.com/search/post/${enc(q)}` },
+  { id: 'medium', zh: 'Medium', en: 'Medium', group: 'content', site: 'medium.com', browser: (q) => `https://medium.com/search?q=${enc(q)}`, lang: 'en', entryOnly: true, needsTunnel: true },
 ];
 
 export const PLATFORMS = new Map(PLATFORM_LIST.map((item) => [item.id, item]));
@@ -2158,30 +2158,59 @@ export async function runSearch(options) {
     if (!def) return { id, label: id, status: 'error', note: 'unknown platform', count: 0, browser: '', results: [] };
     const browserUrl = def.browser ? def.browser(query) : `https://www.bing.com/search?q=${enc(query)}`;
     const started = Date.now();
-    const platformTimeout = def.needsTunnel ? Math.min(timeoutMs, 6000) : timeoutMs;
+    const platformQuery = platformQueryFor(def, query);
+    const platformTimeout = Math.min(timeoutMs, def.timeoutCap || (def.needsTunnel ? 6000 : timeoutMs));
+    if (def.entryOnly === true) {
+      // 这类站点没有可抓取的服务端搜索（SPA / 需要签名 / 只对浏览器开放），与其白等一次
+      // 搜索引擎再被判「忽略 site:」，不如直接把站内搜索入口交出去，并把原因写清楚。
+      const entryUrl = def.browser(query);
+      return {
+        id,
+        label: def.zh,
+        status: 'empty',
+        note: def.needsTunnel === true
+          ? '该站点没有可抓取的服务端搜索，且当前网络需要代理；已给站内入口'
+          : '该站点没有可抓取的服务端搜索（浏览器渲染/需要签名），已给站内入口',
+        count: 1,
+        browser: browserUrl,
+        backend: 'entry',
+        kind: kindOf(def),
+        entryOnly: true,
+        login: def.needsLogin !== undefined,
+        results: [{
+          platform: id,
+          platformLabel: def.zh,
+          title: `在${def.zh}里直接搜索「${query}」`,
+          url: entryUrl,
+          snippet: '打开该站自己的搜索页，按站内排序浏览全部结果',
+          source: def.zh,
+          extra: { inSite: true },
+        }],
+      };
+    }
     try {
       let rows;
       const provider = providers.get(id);
       if (provider && typeof provider.search === 'function') {
         rows = await collectPages(
-          (page) => provider.search({ client, query, limit: fetchLimit, timeoutMs: platformTimeout, page, pages }),
+          (page) => provider.search({ client, query: platformQuery, limit: fetchLimit, timeoutMs: platformTimeout, page, pages }),
           { pages, limit: fetchLimit, singlePage: provider.singlePage === true || def.list === true },
         );
       } else if (def.backend && BACKENDS[def.backend]) {
-        rows = await collectPages((page) => BACKENDS[def.backend]({ client, query, limit: fetchLimit, timeoutMs: platformTimeout, page, pages }), { pages, limit: fetchLimit, singlePage: def.list === true || !PAGED_BACKENDS.has(def.backend) });
+        rows = await collectPages((page) => BACKENDS[def.backend]({ client, query: platformQuery, limit: fetchLimit, timeoutMs: platformTimeout, page, pages }), { pages, limit: fetchLimit, singlePage: def.list === true || !PAGED_BACKENDS.has(def.backend) });
       } else if (def.url) {
-        rows = await fetchCustom({ client, def, query, limit: fetchLimit });
+        rows = await fetchCustom({ client, def, query: platformQuery, limit: fetchLimit });
         if ((!rows || rows.length === 0) && def.site) {
-          rows = await siteSearch({ client, query, site: def.site, limit: fetchLimit, timeoutMs: platformTimeout });
+          rows = await siteSearch({ client, query: platformQuery, site: def.site, limit: fetchLimit, timeoutMs: platformTimeout });
         } else if (rows && rows.length < 2 && def.site) {
-          const extra = await siteSearch({ client, query, site: def.site, limit: fetchLimit, timeoutMs: platformTimeout });
+          const extra = await siteSearch({ client, query: platformQuery, site: def.site, limit: fetchLimit, timeoutMs: platformTimeout });
           const seen = new Set(rows.map((row) => row.url));
           rows = rows.concat((extra || []).filter((row) => !seen.has(row.url)));
         }
       } else if (def.site) {
-        rows = await siteSearch({ client, query, site: def.site, limit: fetchLimit, timeoutMs: platformTimeout });
+        rows = await siteSearch({ client, query: platformQuery, site: def.site, limit: fetchLimit, timeoutMs: platformTimeout });
       } else {
-        rows = await BACKENDS.bing({ client, query, limit: fetchLimit, timeoutMs: platformTimeout });
+        rows = await BACKENDS.bing({ client, query: platformQuery, limit: fetchLimit, timeoutMs: platformTimeout });
       }
       const selfHost = def.backend ? ENGINE_SELF_HOST[def.backend] : undefined;
       let dropped = 0;
@@ -2209,7 +2238,8 @@ export async function runSearch(options) {
             return true;
           }),
       );
-      const items0 = def.list === true ? collected : keepRelevant(collected, relevanceTokens(query), query);
+      const relevantText = platformQuery === query ? query : `${query} ${platformQuery}`;
+      const items0 = def.list === true ? collected : keepRelevant(collected, relevanceTokens(relevantText), relevantText);
       // 抓到了内容但全被判为不相关：多半是搜索引擎返回了降级/风控页（比如整页都是 7-Zip），
       // 这时候说「没结果」不准确，明确告诉用户是被过滤掉的。
       const offTopic = def.list !== true && collected.length > 0 && items0.length === 0;
@@ -2223,7 +2253,7 @@ export async function runSearch(options) {
       let siteIgnored = false;
       if (def.list !== true && def.site && items.length < Math.min(3, limit)) {
         const siteStats = {};
-        const extra = await siteSearch({ client, query, site: def.site, limit: fetchLimit, timeoutMs: platformTimeout, stats: siteStats });
+        const extra = await siteSearch({ client, query: platformQuery, site: def.site, limit: fetchLimit, timeoutMs: platformTimeout, stats: siteStats });
         const more = (extra || [])
           .map((row) => result(id, def, row))
           .filter((item) => !isLandingPage(item.url) && !isJunkResult(item, query));
@@ -2231,12 +2261,12 @@ export async function runSearch(options) {
         items = dedupe(items.concat(more)).slice(0, limit);
       }
       if (def.list !== true && def.site && query !== '' && items.length < limit) {
-        const entry = def.browser(query);
+        const entry = def.browser(platformQuery);
         if (!items.some((item) => item.url === entry)) {
           items = items.concat({
             platform: id,
             platformLabel: def.zh,
-            title: `在${def.zh}里直接搜索「${query}」`,
+            title: `在${def.zh}里直接搜索「${platformQuery}」`,
             url: entry,
             snippet: '打开该站自己的搜索页，按站内排序浏览全部结果',
             source: def.zh,
@@ -2898,6 +2928,22 @@ function domainVariant(query) {
  * 查询规划：判断意图、生成 1–4 个检索变体、挑出该去的平台。
  * 纯函数，不发请求；面板/工具/MCP 都用它决定「这次该问谁」。
  */
+// 平台级语言处理：英文站点（Stack Overflow / Hacker News / PyPI…）对中文查询基本零命中，
+// 所以带 CJK 的查询在这些平台上自动换成拉丁变体（中文技术词 → 英文，再带走原有的拉丁 token）。
+const CJK_PATTERN = /[\u3400-\u9fff\u3040-\u30ff]/;
+
+export function hasCJK(value) {
+  return CJK_PATTERN.test(String(value || ''));
+}
+
+export function platformQueryFor(def, query) {
+  const text = String(query || '').trim();
+  if (!text || !def || def.lang !== 'en') return text;
+  if (!hasCJK(text)) return text;
+  const latin = latinVariant(text);
+  return latin === '' ? text : latin;
+}
+
 export function planQuery(options = {}) {
   const query = String(options.query || '').trim();
   const explicitInput = Array.isArray(options.platforms)

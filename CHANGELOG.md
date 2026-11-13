@@ -1,5 +1,22 @@
 # 变更记录
 
+## [1.22.0] - 2026-11-13
+
+### 空白站点治理
+
+- 英文站点新增 `lang: 'en'`：查询含中文时自动换成拉丁变体（`hasCJK` + `platformQueryFor` 用 `latinVariant` 生成），Stack Overflow / Hacker News / PyPI / Medium / Reddit / YouTube / Amazon 都受益。实测 Stack Exchange API 用 `cordis 插件` 返回 0 条、用 `cordis plugin` 返回结果。
+- 15 个没有服务端搜索的平台加 `entryOnly: true`（1688、亚马逊、博客园、Gitee、京东、开源中国、少数派、微博、闲鱼、小红书、抖音、Medium、PyPI、YouTube、Reddit）：不再白跑一次被忽略的 `site:` 查询，直接返回站内入口行，耗时从 700–900 ms 降到 **0–1 ms**，note 写明原因。
+- 去掉 Stack Overflow / Hacker News 误标的 `needsTunnel`（它们的 API 在本机可达，之前被截到 6 秒还误报「需要代理」）。
+- 新增按平台超时上限 `timeoutCap`：淘宝/今日头条 9 s、V2EX/微信 7 s、Stack Overflow 9 s、Hacker News 8 s——单站不再拖住整轮搜索。
+- `platformCatalog()` 继续输出 `kind`，`runSearch` 的平台条目新增 `entryOnly` 标记。
+
+### 验证
+
+- `_probe/verify-122.mjs`：`stackoverflow`（中文查询）→ 空但不再报超时；`hackernews`（中文查询）→ 用英文变体拿到结果；`jd/douyin/weibo` → 0–1 ms 返回入口行。
+- `_probe/verify-122b.mjs`：中文查询 `龙珠 孙悟空` 在 bing/zhihu/bilibili 行为不变，跨平台重复 0。
+- 全量回归 13 套 + `selftest`（见 README「自测与修复」）。
+
+
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
 ## 1.21.0
