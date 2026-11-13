@@ -36,6 +36,13 @@ window.__ModuleLoader__.load({
         healthBusy: '体检中…',
         healthTally: '体检：可用 {ok} · 空 {empty} · 被拦 {blocked} · 需登录 {login} · 出错 {error}',
         shellTag: '中转',
+        trendNew: '新',
+        trendUp: '↑{n}',
+        trendDown: '↓{n}',
+        trendHot: '热度 {v}',
+        trendHint: '与上一次抓取相比的名次变化',
+        resonance: '共振',
+        resonanceHint: '另一个榜单里也有同话题：{list}',
         cacheTag: '缓存',
         cacheHint: '结果来自本地缓存（内存 LRU + SQLite），没有重新联网；要最新数据点「刷新」',
         refresh: '刷新',
@@ -128,6 +135,13 @@ window.__ModuleLoader__.load({
         healthBusy: 'Checking…',
         healthTally: 'Health: ok {ok} · empty {empty} · blocked {blocked} · login {login} · error {error}',
         shellTag: 'Redirect',
+        trendNew: 'New',
+        trendUp: '↑{n}',
+        trendDown: '↓{n}',
+        trendHot: 'heat {v}',
+        trendHint: 'Rank change since the previous fetch',
+        resonance: 'Cross',
+        resonanceHint: 'Same topic also on: {list}',
         cacheTag: 'cached',
         cacheHint: 'Served from the local cache (LRU + SQLite) without going online; hit Refresh for fresh data',
         refresh: 'Refresh',
@@ -1129,6 +1143,14 @@ function statusStyle(status) {
     const meta = [item.platformLabel || item.platform, kindText(t, item.kind || 'web')];
     if (item.extra && item.extra.author) meta.push(`@${item.extra.author}`);
     if (item.extra && item.extra.authorTotal) meta.push(`共 ${item.extra.authorTotal} 个视频`);
+    if (item.extra && item.extra.trend) {
+      const trend = item.extra.trend;
+      if (trend.isNew) meta.push('新上榜');
+      else if (trend.rankDelta > 0) meta.push(`↑${trend.rankDelta}`);
+      else if (trend.rankDelta < 0) meta.push(`↓${Math.abs(trend.rankDelta)}`);
+      if (trend.rank && trend.rank > 0) meta.push(`第 ${trend.rank} 名`);
+    }
+    if (item.extra && Array.isArray(item.extra.resonance) && item.extra.resonance.length > 0) meta.push('共振');
     parts.push(`   ${meta.join(' · ')}`);
     parts.push(`   ${item.url}`);
     if (item.snippet) parts.push(`   ${String(item.snippet).replace(/\s+/g, ' ').slice(0, 160)}`);
@@ -1845,6 +1867,30 @@ function statusStyle(status) {
                         h('span', { style: S.tag }, item.platformLabel || item.platform),
                         h('span', { style: S.kindTag }, kindText(t, kind)),
                         item.extra && item.extra.shell ? h('span', { style: S.kindTag, title: t('shellHint') }, t('shellTag')) : null,
+                        item.extra && item.extra.trend && item.extra.trend.isNew
+                          ? h('span', { style: S.trendNew, title: t('trendHint') }, t('trendNew'))
+                          : item.extra && item.extra.trend && item.extra.trend.rankDelta !== 0
+                            ? h(
+                                'span',
+                                {
+                                  style: item.extra.trend.rankDelta > 0 ? S.trendUp : S.trendDown,
+                                  title: t('trendHint'),
+                                },
+                                item.extra.trend.rankDelta > 0
+                                  ? fill(t('trendUp'), { n: item.extra.trend.rankDelta })
+                                  : fill(t('trendDown'), { n: Math.abs(item.extra.trend.rankDelta) }),
+                              )
+                            : null,
+                        item.extra && Array.isArray(item.extra.resonance) && item.extra.resonance.length > 0
+                          ? h(
+                              'span',
+                              {
+                                style: S.resonanceTag,
+                                title: fill(t('resonanceHint'), { list: item.extra.resonance.join(' / ') }),
+                              },
+                              `${t('resonance')}×${item.extra.resonance.length}`,
+                            )
+                          : null,
                         item.url,
                       ),
                       item.extra && authorText(t, item.extra)

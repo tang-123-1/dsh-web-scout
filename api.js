@@ -16,6 +16,10 @@ import {
   planQuery,
   planWaves,
   research as runResearch,
+  hotSnapshotOf,
+  hotTrendOf,
+  withHotTrend,
+  crossResonance,
   PLATFORMS,
 } from './engines.js';
 import { openInBrowser } from './open.js';
@@ -164,6 +168,70 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
     return { ...settings, cookies: undefined, cookieHosts: hosts, cookieCount: Object.keys(hosts).length };
   }
 
+  // 榜单类平台的「上一次」快照：用来算名次变化、新上榜、热度涨幅，以及跨榜同题共振。
+  // 只碰 list:true 的平台；关键词搜索不受影响。
+  function decorateHot(result) {
+    const entries = Array.isArray(result && result.platforms) ? result.platforms : [];
+    const snapshots = { ...(store.get('hotSnapshot') || {}) };
+    const trendsByUrl = new Map();
+    const resonanceRows = [];
+    const intel = {};
+    let touched = false;
+
+    for (const entry of entries) {
+      if (!entry || entry.status !== 'ok' || !Array.isArray(entry.results) || entry.results.length === 0) continue;
+      const def = PLATFORMS.get(entry.id);
+      if (!def || def.list !== true) continue;
+      const prev = snapshots[entry.id];
+      const trends = hotTrendOf(prev, entry.results);
+      trends.forEach((trend) => {
+        if (trend && trend.url) trendsByUrl.set(trend.url, trend);
+      });
+      snapshots[entry.id] = hotSnapshotOf(entry.results);
+      touched = true;
+      const fresh = trends.filter((trend) => trend.isNew).length;
+      const moved = trends.filter((trend) => trend.rankDelta !== 0).length;
+      intel[entry.id] = { at: snapshots[entry.id].at, size: trends.length, fresh, moved };
+      entry.results.forEach((item) => resonanceRows.push(item));
+    }
+
+    if (!touched) return { result, intel };
+
+    // 快照只留最近 8 个平台，别把 store 撑爆
+    const ids = Object.keys(snapshots);
+    if (ids.length > 8) {
+      const keep = new Set(ids.slice(-8));
+      for (const id of ids) if (!keep.has(id)) delete snapshots[id];
+    }
+    store.patch({ hotSnapshot: snapshots });
+
+    const withTrend = (item) => {
+      const trend = trendsByUrl.get(item && item.url);
+      if (!trend) return item;
+      return {
+        ...item,
+        extra: {
+          ...(item.extra || {}),
+          trend: {
+            rank: trend.rank,
+            prevRank: trend.prevRank,
+            rankDelta: trend.rankDelta,
+            hot: trend.hot,
+            hotDelta: trend.hotDelta,
+            isNew: trend.isNew,
+          },
+        },
+      };
+    };
+
+    const decoratedFlat = (result.results || []).map(withTrend);
+    const resonated = crossResonance(decoratedFlat);
+    const decoratedEntries = entries.map((entry) =>
+      entry && Array.isArray(entry.results) ? { ...entry, results: entry.results.map(withTrend) } : entry,
+    );
+    return { result: { ...result, platforms: decoratedEntries, results: resonated }, intel };
+  }
+
   function catalogPayload(settings) {
     return {
       platforms: platformCatalog(),
@@ -251,7 +319,9 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         const key = searchCacheKey(settings, query, platforms, limit, pages);
         const cached = payload.refresh === true ? undefined : cache.get(key);
         if (cached !== undefined) {
-          const data = summarize(cached.value);
+          const hot = decorateHot(cached.value);
+          const data = summarize(hot.result);
+          data.trend = hot.intel;
           data.cached = true;
           data.cacheAgeMs = cached.ageMs;
           data.cacheSource = cached.source;
@@ -271,7 +341,9 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           cookies: settings.cookies || {},
         });
         cache.set(key, result, ttlFrom(settings));
-        const data = summarize(result);
+        const hot = decorateHot(result);
+        const data = summarize(hot.result);
+        data.trend = hot.intel;
         data.cached = false;
         if (payload.open === true) {
           const first = data.results.find((item) => /^https?:\/\//i.test(item.url));

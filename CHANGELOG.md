@@ -2,6 +2,19 @@
 
 本文件记录 `web-scout`（@local/web-scout）的功能演进。版本号遵循 `MAJOR.MINOR.PATCH`。
 
+## 1.21.0
+
+热榜趋势 + 跨榜共振：让「抖音热榜」这类平台不再只是一次性快照。
+
+### 新增
+- 榜单快照：`hotSnapshotOf` / `hotTrendOf` / `withHotTrend`，每平台保留最近一次 60 行，store 上限 8 个平台。
+- 趋势字段：`extra.trend`（`isNew` / `rankDelta` / `hotDelta` / `rank`）与接口级 `trend` 摘要（每平台 `size/fresh/moved`）。
+- 跨榜共振：`crossResonance`，同话题出现在多个榜单时写 `extra.resonance`。
+- 面板徽标：新（黄）/`↑n`（绿）/`↓n`（灰）/「共振×n」；「加入对话」文本同步带「新上榜 · ↑3 · 第 2 名 · 共振」。
+
+### 验证
+- `verify-trend.mjs` 12/12（快照结构、名次与热度差、无历史不误标新、合并不覆盖原字段、共振正反例）。
+- live：连打两次榜单 → 微博热搜 `fresh=1 moved=3`、24 行带趋势、2 行共振；关键词检索 `trend` 为空、结果不受影响。
 ## 1.20.0
 
 自测套件 + 五个真 bug。

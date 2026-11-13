@@ -3133,3 +3133,117 @@ export async function research(options = {}) {
     text,
   };
 }
+
+// ---- 热榜趋势 / 跨榜共振（v1.21）----
+export const HOT_SNAPSHOT_ROWS = 60;
+
+/** 归一化榜单标题：去空白与标点，只留前 40 字，用于跨次比对。 */
+function hotKey(title) {
+  return String(title || '')
+    .replace(/\s+/g, '')
+    .replace(/[「」『』《》【】\[\]()（）!！?？,，.。:：;；'"“”‘’]/g, '')
+    .slice(0, 40);
+}
+
+/** 把一次榜单结果压成快照行：[[标题键, 名次, 热度], ...]。 */
+export function hotSnapshotOf(items, at = Date.now()) {
+  const rows = [];
+  (items || []).slice(0, HOT_SNAPSHOT_ROWS).forEach((item, index) => {
+    const key = hotKey(item && item.title);
+    if (key === '') return;
+    rows.push([key, index + 1, Number(item && item.extra && item.extra.hot) || 0]);
+  });
+  return { at, rows };
+}
+
+/** 对比上一次快照，算出每个条目的名次变化/热度变化/是否新上榜。 */
+export function hotTrendOf(prev, items) {
+  const prevRows = prev && Array.isArray(prev.rows) ? prev.rows : [];
+  const seen = new Map();
+  prevRows.forEach((row) => {
+    if (Array.isArray(row) && typeof row[0] === 'string') {
+      seen.set(row[0], { rank: Number(row[1]) || 0, hot: Number(row[2]) || 0 });
+    }
+  });
+  const out = [];
+  (items || []).forEach((item, position) => {
+    const key = hotKey(item && item.title);
+    if (key === '') return;
+    const rank = position + 1;
+    const hot = Number(item && item.extra && item.extra.hot) || 0;
+    const before = seen.get(key);
+    if (!before) {
+      out.push({ key, url: item.url, isNew: prevRows.length > 0, rank, prevRank: 0, rankDelta: 0, hot, prevHot: 0, hotDelta: 0 });
+      return;
+    }
+    out.push({
+      key,
+      url: item.url,
+      isNew: false,
+      rank,
+      prevRank: before.rank,
+      rankDelta: before.rank - rank,
+      hot,
+      prevHot: before.hot,
+      hotDelta: hot - before.hot,
+    });
+  });
+  return out;
+}
+
+/** 把趋势合并进结果行（按 url 对齐）。 */
+export function withHotTrend(items, trends) {
+  const byUrl = new Map();
+  (trends || []).forEach((trend) => {
+    if (trend && trend.url) byUrl.set(trend.url, trend);
+  });
+  return (items || []).map((item) => {
+    const trend = byUrl.get(item && item.url);
+    if (!trend) return item;
+    return {
+      ...item,
+      extra: {
+        ...(item.extra || {}),
+        trend: {
+          rank: trend.rank,
+          prevRank: trend.prevRank,
+          rankDelta: trend.rankDelta,
+          hot: trend.hot,
+          hotDelta: trend.hotDelta,
+          isNew: trend.isNew,
+        },
+      },
+    };
+  });
+}
+
+/** 跨榜共振：两个榜单里出现同话题（2-gram 命中 ≥2）时互相标注。 */
+export function crossResonance(rows) {
+  const tokensOf = (text) => {
+    const grams = new Set(cjkGrams(String(text || '')));
+    String(text || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(' ')
+      .filter((token) => token.length >= 4)
+      .forEach((token) => grams.add(token));
+    return grams;
+  };
+  const prepared = (rows || []).map((item) => ({ platform: item.platform, grams: tokensOf(item.title) }));
+  return (rows || []).map((item, index) => {
+    const self = prepared[index];
+    const shared = new Set();
+    if (self.grams.size > 0) {
+      prepared.forEach((other) => {
+        if (other.platform === self.platform || other.grams.size === 0) return;
+        let hits = 0;
+        other.grams.forEach((gram) => {
+          if (self.grams.has(gram)) hits += 1;
+        });
+        if (hits >= 2) shared.add(other.platform);
+      });
+    }
+    if (shared.size === 0) return item;
+    return { ...item, extra: { ...(item.extra || {}), resonance: [...shared] } };
+  });
+}

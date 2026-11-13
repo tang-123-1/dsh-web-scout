@@ -21,6 +21,7 @@ const DEFAULTS = {
   customPlatforms: [],
   cookies: {},
   accounts: {},
+  hotSnapshot: {},
 };
 
 function configDir() {
@@ -28,6 +29,29 @@ function configDir() {
   const profile = process.env.DSH_PROFILE ? [process.env.DSH_HOME && path.join(process.env.DSH_HOME, 'profiles', process.env.DSH_PROFILE)] : [];
   const base = process.env.DSH_PROFILE_DIR || profile[0] || home;
   return base;
+}
+
+function normalizeHotSnapshot(value) {
+  const out = {};
+  if (!value || typeof value !== 'object') return out;
+  for (const [id, snap] of Object.entries(value)) {
+    if (typeof id !== 'string' || id === '' || id.length > 40) continue;
+    if (!snap || typeof snap !== 'object' || !Array.isArray(snap.rows)) continue;
+    const rows = [];
+    for (const row of snap.rows) {
+      if (!Array.isArray(row) || typeof row[0] !== 'string') continue;
+      const title = row[0].slice(0, 40);
+      const rank = Number(row[1]);
+      const hot = Number(row[2]);
+      rows.push([title, Number.isFinite(rank) ? Math.max(1, Math.round(rank)) : 0, Number.isFinite(hot) ? Math.max(0, Math.round(hot)) : 0]);
+      if (rows.length >= 60) break;
+    }
+    if (rows.length === 0) continue;
+    const at = Number(snap.at);
+    out[id] = { at: Number.isFinite(at) ? at : 0, rows };
+    if (Object.keys(out).length >= 8) break;
+  }
+  return out;
 }
 
 function normalize(raw) {
@@ -93,7 +117,8 @@ function normalize(raw) {
     }
     out.accounts = accounts;
   }
-  return out;
+  out.hotSnapshot = normalizeHotSnapshot(value.hotSnapshot);
+    return out;
 }
 
 export class ScoutStore {
