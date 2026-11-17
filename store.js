@@ -30,6 +30,7 @@ const DEFAULTS = {
   accounts: {},
   hotSnapshot: {},
   watches: [],
+  recent: [],
   // v1.28：健康检查只保留最近 50 次/平台，够画色条、够算成功率，又不会把配置文件撑大。
   health: {},
 };
@@ -129,6 +130,23 @@ function normalizeWatches(value) {
   return out;
 }
 
+function normalizeRecent(value) {
+  const out = [];
+  if (!Array.isArray(value)) return out;
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const query = typeof entry.q === 'string' ? entry.q.trim().slice(0, 160) : '';
+    const at = typeof entry.at === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(entry.at) ? entry.at : '';
+    if (query === '' || at === '') continue;
+    const platforms = Array.isArray(entry.platforms)
+      ? entry.platforms.map((item) => String(item)).filter(Boolean).slice(0, 8)
+      : [];
+    out.push({ q: query, platforms, at });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
 function normalize(raw) {
   const value = raw && typeof raw === 'object' ? raw : {};
   const out = { ...DEFAULTS };
@@ -194,6 +212,7 @@ function normalize(raw) {
   }
   out.hotSnapshot = normalizeHotSnapshot(value.hotSnapshot);
   out.watches = normalizeWatches(value.watches);
+  out.recent = normalizeRecent(value.recent);
   out.health = normalizeHealth(value.health);
     return out;
 }

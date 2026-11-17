@@ -123,6 +123,19 @@ window.__ModuleLoader__.load({
         loginHint: '点「插件浏览器」弹出一个独立 profile 的窗口，在里面登录一次，回来点「读取登录」就能读到（浏览器开着也能读）。',
         customGroup: '自定义站点',
         stale: '插件已更新到磁盘：重启一次 DeepSeek Harness 后「站点」和「登录」才会生效。',
+        copyMd: '复制 Markdown',
+        copyCsv: '复制 CSV',
+        copiedMd: '已复制 Markdown',
+        copiedCsv: '已复制 CSV',
+        copyFailed: '复制失败',
+        sortLabel: '排序',
+        sortScore: '相关度',
+        sortPlatform: '平台',
+        recentTitle: '最近',
+        recentEmpty: '最近没有查询',
+        recentHint: '点一下重跑这条查询（最近 7 天，最多 20 条）',
+        recentClear: '清空',
+        shortcut: 'Alt+W 打开检索面板',
       },
       en: {
         title: 'Web scout',
@@ -237,6 +250,19 @@ window.__ModuleLoader__.load({
           'Sign in on the site in your browser, then press “Import session”. If the import reports a locked database, close the browser windows first.',
         customGroup: 'Custom sites',
         stale: 'Plugin updated on disk — restart DeepSeek Harness once to enable sites and sign-in.',
+        copyMd: 'Copy Markdown',
+        copyCsv: 'Copy CSV',
+        copiedMd: 'Markdown copied',
+        copiedCsv: 'CSV copied',
+        copyFailed: 'Copy failed',
+        sortLabel: 'Sort',
+        sortScore: 'Relevance',
+        sortPlatform: 'Platform',
+        recentTitle: 'Recent',
+        recentEmpty: 'No recent queries',
+        recentHint: 'Click to run that query again (last 7 days, up to 20)',
+        recentClear: 'Clear',
+        shortcut: 'Alt+W opens the panel',
       },
     };
 
@@ -778,6 +804,70 @@ function statusStyle(status) {
       return revision;
     }
 
+    // 导出用：宿主侧不参与排版，纯函数保证「复制出来的文字」可被测试直接断言。
+    function rowsToMarkdown(items, query) {
+      const head = `## ${query || '检索结果'}（${items.length} 条）`;
+      const body = items.map((item, index) => {
+        const meta = [item.platformLabel || item.platform || '', kindText(translate, item.kind || 'web')].filter(Boolean).join(' · ');
+        const snip = item.snippet ? String(item.snippet).replace(/\s+/g, ' ').slice(0, 200) : '';
+        return `${index + 1}. [${String(item.title || '(无标题)').replace(/[\[\]]/g, ' ')}](${item.url})${meta ? ` — ${meta}` : ''}${snip ? `\n   ${snip}` : ''}`;
+      });
+      return [head, '', ...body].join('\n');
+    }
+
+    function rowsToCsv(items) {
+      const cell = (value) => `"${String(value == null ? '' : value).replace(/"/g, '""')}"`;
+      const lines = [['序号', '标题', '平台', '地址', '摘要'].map(cell).join(',')];
+      items.forEach((item, index) => {
+        lines.push(
+          [index + 1, item.title || '', item.platformLabel || item.platform || '', item.url || '', String(item.snippet || '').replace(/\s+/g, ' ')]
+            .map(cell)
+            .join(','),
+        );
+      });
+      return lines.join('\r\n');
+    }
+
+    async function copyPlain(text) {
+      try {
+        if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch {
+        /* 非安全上下文或用户拒绝：继续走 textarea 兜底 */
+      }
+      try {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', 'readonly');
+        area.style.position = 'fixed';
+        area.style.left = '-9999px';
+        document.body.appendChild(area);
+        area.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(area);
+        return ok;
+      } catch {
+        return false;
+      }
+    }
+
+    function sortRows(items, mode) {
+      const copy = items.slice();
+      if (mode === 'platform') {
+        copy.sort((a, b) => {
+          const left = String(a.platformLabel || a.platform || '');
+          const right = String(b.platformLabel || b.platform || '');
+          if (left !== right) return left.localeCompare(right, 'zh');
+          return (Number(b.score) || 0) - (Number(a.score) || 0);
+        });
+      } else {
+        copy.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+      }
+      return copy;
+    }
+
     function ScoutDock(props) {
       const revision = useLocaleRevision();
       const t = React.useMemo(() => translate, [revision]);
@@ -822,6 +912,9 @@ function statusStyle(status) {
   const [watches, setWatches] = React.useState([]);
   const [watchBusy, setWatchBusy] = React.useState('');
   const [watchForm, setWatchForm] = React.useState({ query: '', everyMinutes: 60 });
+  const [recent, setRecent] = React.useState([]);
+  const [sortBy, setSortBy] = React.useState('score');
+  const [copyNote, setCopyNote] = React.useState('');
       const [pasteFor, setPasteFor] = React.useState('');
       const [pasteValue, setPasteValue] = React.useState('');
       const panelRef = React.useRef(null);
@@ -920,6 +1013,7 @@ function statusStyle(status) {
 
       React.useEffect(() => {
         refreshHealthHistory();
+        refreshRecent();
         let alive = true;
         post('catalog')
           .then((value) => {
@@ -929,6 +1023,22 @@ function statusStyle(status) {
         return () => {
           alive = false;
         };
+      }, []);
+
+      // Alt+W：面板没开时打开，开着时聚焦输入框；不抢 Ctrl/⌘ 组合键。
+      React.useEffect(() => {
+        const onHotkey = (event) => {
+          if (!event.altKey || event.ctrlKey || event.metaKey) return;
+          const key = String(event.key || '').toLowerCase();
+          if (key !== 'w' && event.code !== 'KeyW') return;
+          event.preventDefault();
+          setPanel(true);
+          window.setTimeout(() => {
+            if (inputRef.current && typeof inputRef.current.focus === 'function') inputRef.current.focus();
+          }, 30);
+        };
+        window.addEventListener('keydown', onHotkey);
+        return () => window.removeEventListener('keydown', onHotkey);
       }, []);
 
       React.useEffect(() => {
@@ -1190,20 +1300,57 @@ function statusStyle(status) {
         });
       };
 
-      const run = async (options) => {
+      const run = async (options, text) => {
         if (busy) return;
         const force = Boolean(options && options.refresh === true);
+        const asked = typeof text === 'string' ? text : query;
         setOnly('');
         setBusy(true);
         setError('');
         try {
-          const value = await post('search', { query: query, platforms: selected, sessionId: sessionId, refresh: force });
+          const value = await post('search', { query: asked, platforms: selected, sessionId: sessionId, refresh: force });
           setData(value);
+          if (Array.isArray(value && value.recent)) setRecent(value.recent);
         } catch (failure) {
           setError(String((failure && failure.message) || failure));
         } finally {
           setBusy(false);
         }
+      };
+
+      const runRecent = (entry) => {
+        if (!entry || typeof entry.q !== 'string') return;
+        setQuery(entry.q);
+        run({}, entry.q);
+      };
+
+      const refreshRecent = async () => {
+        try {
+          const value = await post('recent.list', {});
+          setRecent(Array.isArray(value && value.recent) ? value.recent : []);
+        } catch {
+          /* 读不到历史不影响检索 */
+        }
+      };
+
+      const clearRecent = async () => {
+        try {
+          await post('recent.clear', {});
+        } catch {
+          /* 同上 */
+        }
+        setRecent([]);
+      };
+
+      const flashNote = (text) => {
+        setCopyNote(text);
+        window.setTimeout(() => setCopyNote(''), 1600);
+      };
+
+      const copyRows = async (kind, items, asked) => {
+        const text = kind === 'csv' ? rowsToCsv(items) : rowsToMarkdown(items, asked);
+        const ok = await copyPlain(text);
+        flashNote(ok ? t(kind === 'csv' ? 'copiedCsv' : 'copiedMd') : t('copyFailed'));
       };
 
       const insertToComposer = (block) => {
@@ -1431,7 +1578,7 @@ function statusStyle(status) {
       let overlay = null;
       if (panel) {
         const rows = (data && data.results) || [];
-        const seenRows = only === '' ? rows : rows.filter((item) => item.platform === only);
+        const seenRows = sortRows(only === '' ? rows : rows.filter((item) => item.platform === only), sortBy);
         const platforms = (data && data.platforms) || [];
         const blockedRows = platforms.filter((item) => item.status !== 'ok' && item.browser);
         overlay = ReactDOM.createPortal(
@@ -1501,6 +1648,42 @@ function statusStyle(status) {
                     researchBusy ? t('researchBusy') : t('research'),
                   )
                 : null,
+              rows.length > 0
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      title: t('sortLabel') + '：' + (sortBy === 'score' ? t('sortPlatform') : t('sortScore')),
+                      style: merge(S.viewBtn, { marginRight: '2px' }),
+                      onClick: () => setSortBy((current) => (current === 'score' ? 'platform' : 'score')),
+                    },
+                    `${t('sortLabel')}：${sortBy === 'score' ? t('sortScore') : t('sortPlatform')}`,
+                  )
+                : null,
+              rows.length > 0
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      title: copyNote || t('copyMd'),
+                      style: merge(S.viewBtn, { marginRight: '2px' }),
+                      onClick: () => copyRows('md', seenRows, data ? data.query : ''),
+                    },
+                    copyNote || t('copyMd'),
+                  )
+                : null,
+              rows.length > 0
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      title: t('copyCsv'),
+                      style: merge(S.viewBtn, { marginRight: '2px' }),
+                      onClick: () => copyRows('csv', seenRows, data ? data.query : ''),
+                    },
+                    t('copyCsv'),
+                  )
+                : null,
               h(
                 'button',
                 {
@@ -1566,6 +1749,58 @@ function statusStyle(status) {
                   )
                 : null,
             ),
+            recent.length > 0
+              ? h(
+                  'div',
+                  { style: merge(S.chips, { marginTop: '2px' }) },
+                  h('span', { style: merge(S.rowNote, { marginRight: '2px' }), title: t('recentHint') }, t('recentTitle') + '：'),
+                  recent.slice(0, 6).map((entry) =>
+                    h(
+                      'button',
+                      {
+                        key: entry.q + '|' + entry.at,
+                        type: 'button',
+                        title: (entry.platforms || []).join(' / ') || t('auto'),
+                        style: S.chip,
+                        onClick: (event) => {
+                          runRecent(entry);
+                          blurOnClick(event);
+                        },
+                      },
+                      String(entry.q).slice(0, 18),
+                    ),
+                  ),
+                  recent.length > 6
+                    ? h(
+                        'button',
+                        { type: 'button', title: t('recentHint'), style: S.chip, onClick: () => setOpen((current) => (current === 'recentAll' ? '' : 'recentAll')) },
+                        `+${recent.length - 6}`,
+                      )
+                    : null,
+                  h('button', { type: 'button', title: t('recentClear'), style: merge(S.chip, { opacity: '0.75' }), onClick: clearRecent }, t('recentClear')),
+                )
+              : null,
+            open === 'recentAll' && recent.length > 6
+              ? h(
+                  'div',
+                  { style: S.chips },
+                  recent.slice(6, 20).map((entry) =>
+                    h(
+                      'button',
+                      {
+                        key: entry.q + '|' + entry.at,
+                        type: 'button',
+                        style: S.chip,
+                        onClick: (event) => {
+                          runRecent(entry);
+                          blurOnClick(event);
+                        },
+                      },
+                      String(entry.q).slice(0, 18),
+                    ),
+                  ),
+                )
+              : null,
             h(
               'div',
               { style: S.chips },
@@ -2239,6 +2474,6 @@ function statusStyle(status) {
       }
     }
 
-    return { inject: inject, apply: apply, ScoutDock: ScoutDock };
+    return { inject: inject, apply: apply, ScoutDock: ScoutDock, rowsToMarkdown: rowsToMarkdown, rowsToCsv: rowsToCsv, sortRows: sortRows };
   },
 });

@@ -287,6 +287,38 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
   const WATCH_LIMIT = 12;
   const WATCH_SEEN_MAX = 400;
 
+  // 最近查询：只留 20 条、7 天；落盘是为了重启面板后还能点回去重跑。
+  const RECENT_LIMIT = 20;
+  const RECENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+  function recentList(settings) {
+    const source = settings || store.snapshot();
+    const raw = Array.isArray(source.recent) ? source.recent : [];
+    const now = Date.now();
+    return raw
+      .filter((entry) => {
+        if (!entry || typeof entry.q !== 'string' || entry.q.trim() === '') return false;
+        const at = Date.parse(String(entry.at || ''));
+        return Number.isFinite(at) && now - at >= 0 && now - at < RECENT_TTL_MS;
+      })
+      .slice(0, RECENT_LIMIT);
+  }
+
+  async function rememberQuery(query, platforms) {
+    const q = String(query || '').trim();
+    if (q === '') return recentList();
+    const list = recentList().filter((entry) => entry.q !== q);
+    list.unshift({ q: q.slice(0, 160), platforms: (platforms || []).slice(0, 8), at: new Date().toISOString() });
+    const recent = list.slice(0, RECENT_LIMIT);
+    store.patch({ recent });
+    try {
+      await store.flush();
+    } catch {
+      /* 历史写盘失败不该让这次检索失败 */
+    }
+    return recent;
+  }
+
   function watchKey(item) {
     return String((item && item.url) || '')
       .replace(/#.*$/, '')
@@ -462,6 +494,7 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           data.cached = true;
           data.cacheAgeMs = cached.ageMs;
           data.cacheSource = cached.source;
+          if (payload.remember !== false) data.recent = await rememberQuery(query, platforms);
           if (payload.open === true) {
             const first = data.results.find((item) => /^https?:\/\//i.test(item.url));
             if (first) data.opened = openInBrowser(first.url);
@@ -486,6 +519,7 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         const data = summarize(hot.result);
         data.trend = hot.intel;
         data.cached = false;
+        if (payload.remember !== false) data.recent = await rememberQuery(query, platforms);
         if (payload.open === true) {
           const first = data.results.find((item) => /^https?:\/\//i.test(item.url));
           if (first) data.opened = openInBrowser(first.url);
@@ -754,6 +788,18 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         store.patch({ health: next });
         await store.flush();
         return { removed: id === '' ? 'all' : id, left: Object.keys(next).length };
+      }
+      case 'recent.list': {
+        return { recent: recentList(settings), ttlDays: 7, limit: RECENT_LIMIT };
+      }
+      case 'recent.clear': {
+        store.patch({ recent: [] });
+        try {
+          await store.flush();
+        } catch {
+          /* 清空失败也不该抛 */
+        }
+        return { recent: [] };
       }
       case 'config': {
         return redactSettings(store.patch(payload.patch || {}));
