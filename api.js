@@ -944,6 +944,8 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           platforms: providerBridge && typeof providerBridge.platformCount === 'function' ? providerBridge.platformCount() : 0,
           dir: state.report ? state.report.dir : '',
           external: state.report ? state.report.external : [],
+          packages: state.report && Array.isArray(state.report.packages) ? state.report.packages : [],
+          packageRoots: state.report && Array.isArray(state.report.packageRoots) ? state.report.packageRoots : [],
           skipped: state.report ? state.report.skipped : true,
           errors: state.report ? state.report.errors : [],
           initError: state.error || '',

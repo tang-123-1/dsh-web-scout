@@ -1,5 +1,27 @@
 # 变更记录
 
+## [1.32.0] - 2026-11-17
+
+Provider 生态：npm 包发现 + 脚手架 + 文档。
+
+### 新增
+- `discoverPackageProviders()`：扫描 `node_modules` 里的 `web-scout-provider-*`，按 `exports` → `main` → `index.mjs`/`index.js` 解析入口，最多 20 包、单入口 ≤256KB；加载失败只记 `errors`。provider 新增来源 `package`（与单文件 `external` 并存，互不覆盖）。
+- 扫描根：profile 目录、`DSH_HOME`、插件安装目录；`provider.list` 新增 `packages` 与 `packageRoots`。
+- `scripts/new-provider.mjs`（`npm run provider:new -- <id>`）：生成带 `browser`/`search` 骨架的单文件 provider，校验 id，支持 `--dir` / `--force`。
+- `docs/providers.md`：字段约定、`search()` 契约、npm 包发布方式、自检清单；随包发布。
+- `initProviders()` 报告新增 `packages` / `packageRoots`。
+
+### 修复（本轮自测抓出）
+- `providers/registry.js` 的 `SOURCES` 只允许 `builtin|external|custom`，新来源 `package` 被判非法、包 provider 全部加载失败 → 加入白名单。
+- `docs/providers.md` 初稿把 `kind` 写成 `article | repo | post | video …`，其中 `repo`/`post` 并不合法（真实取值 `auto|web|article|qa|forum|code|doc|video|hot|shop|social`）→ 照真实枚举改正。
+- 探针里用 `kind: 'repo'` 造夹具，因此复现了上面这条校验错误 → 改成 `code`。
+
+### 自测
+- `test/provider-discovery.test.mjs` 6 项（发现、忽略无关包、坏包不影响好包、exports 优先、缺目录 skipped、单文件与包共存）。
+- `_probe/verify-provider-c2.mjs` 8/8（临时 profile 里同时放单文件与 npm 包，`initProviders()` 两个都进平台表、`source` 正确、内置 46 个平台未受影响）。
+- `_probe/verify-scaffold.mjs` 8/8（生成、语法检查、拒绝覆盖、`--force`、非法 id、缺参数、`--help`）。
+- 全量 `node --test` **65/65**。
+
 ## [1.31.0] - 2026-11-17
 
 MCP 深化：资源、提示词与进度通知。

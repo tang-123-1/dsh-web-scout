@@ -1,8 +1,10 @@
 // Platform registry + search backends. Every platform resolves to either a JSON/HTML backend or a site-scoped web search.
 import crypto from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { absolutize, createClient, decodeEntities, hostOf, htmlToText, stripTags, titleOf } from './net.js';
 import { providers } from './providers/registry.js';
-import { externalProviderDir, loadExternalProviders } from './providers/external.js';
+import { discoverPackageProviders, externalProviderDir, loadExternalProviders } from './providers/external.js';
 import { renderAvailable, renderHtml } from './render.js';
 
 const enc = (value) => encodeURIComponent(value);
@@ -2081,17 +2083,35 @@ export function registerBuiltinProviders() {
 export async function initProviders(options = {}) {
   registerBuiltinProviders();
   const report = await loadExternalProviders({ dir: options.directory || externalProviderDir(), registry: providers });
-  const added = providers.bySource('external');
+  const packageRoots = options.packageRoots || providerPackageRoots();
+  const packages = await discoverPackageProviders({ roots: packageRoots, registry: providers });
+  const added = providers.bySource('external').concat(providers.bySource('package'));
   EXTERNAL_PLATFORMS = added.map(platformDefFor);
   rebuildPlatformMap();
   return {
     builtin: providers.bySource('builtin').length,
-    external: added.map((provider) => provider.id),
+    external: added.filter((provider) => provider.source === 'external').map((provider) => provider.id),
+    packages: packages.packages.map((item) => item.id),
+    packageRoots: packages.roots,
     platforms: PLATFORMS.size,
     dir: report.dir,
-    skipped: report.skipped,
-    errors: report.errors,
+    skipped: report.skipped && packages.skipped,
+    errors: report.errors.concat(packages.errors),
   };
+}
+
+/** 找 provider 包的 node_modules：当前 profile、DSH_HOME，以及插件自身安装目录（向上两级）。 */
+function providerPackageRoots() {
+  const roots = [];
+  const push = (value) => {
+    if (typeof value === 'string' && value !== '' && !roots.includes(value)) roots.push(value);
+  };
+  push(externalProviderDir().replace(/[\\/]web-scout-providers$/, ''));
+  if (process.env.DSH_HOME) push(process.env.DSH_HOME);
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  push(path.join(here, '..'));
+  push(here);
+  return roots;
 }
 
 /** provider 概览（HTTP op provider.list 用）。 */

@@ -34,6 +34,7 @@
 - **导出与历史**：结果按相关度/平台排序，一键复制 Markdown / CSV；最近 20 条查询可点回重跑；Alt+W 随时开面板。
 - **重排与熔断**：查询词重排（可插外部重排器），连续失败的平台自动跳过、冷却后自动恢复。
 - **MCP 资源与提示词**：平台目录/体检历史/最近查询等 5 个资源、3 个提示词，工具调用带进度通知。
+- **Provider 生态**：单文件或 npm 包（`web-scout-provider-*`）接入自己的站点，附脚手架与约定文档。
 - **话题追踪**：盯一个查询词，后台按间隔重跑，每轮只回「没见过」的新链接（v1.25）。
 - **浏览器渲染**：SPA / 要签名的站点用插件自管浏览器真渲染一次再抽结果，失败退回入口行（v1.26）。
 
@@ -276,6 +277,27 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | `verify-evidence.mjs` | 去重、打分排序、每平台配额、预算、摘录命中、缺口、榜单空 query、新鲜度、体检跳过规则 | 19/19 |
 | `verify-evidence-live.mjs` | live 证据包预算/缓存/榜单、体检三站真打、未知平台 skipped | 15/15 |
 | `verify-mcp-117.mjs` | MCP 侧五个工具、证据包预算与缓存、体检、缺 query isError | 11/11 |
+
+### Provider 生态（v1.32）
+
+不想等内置平台？自己写一个站点适配，或者装别人发布的包。
+
+**两种放法**
+- 单文件：`<profile>/web-scout-providers/<id>.mjs`，改完调 `provider.reload` 立即生效（不用重启 Host）。
+- npm 包：任何 `node_modules/web-scout-provider-<name>`（profile 目录、`DSH_HOME`、插件自身安装目录都会被扫）。入口按 `exports` → `main` → `index.mjs`/`index.js` 找，最多 20 个包、单入口 ≤256KB。
+
+**脚手架**
+```bash
+node scripts/new-provider.mjs my-site          # 写到 profile 的单文件目录
+npm run provider:new -- my-site --dir ./tmp    # 写到指定目录
+```
+生成的文件已经带好 `id` / `label` / `kind` / `browser` / `search` 骨架，只改 `search()` 即可。
+
+**约定**
+- `search({ query, limit, client, signal })` 返回 `{ title, url, snippet? }[]`；`client.get(url, { as: 'text' | 'json' })`。
+- 抛错记为 `error`（连续多次会触发熔断），返回 `[]` 记为 `empty`（不熔断）。
+- 坏文件 / 坏包只进 `provider.list` 的 `errors`，不影响其它 provider 和插件本身。
+- 完整字段与自检清单见 [docs/providers.md](docs/providers.md)。
 
 ### MCP 资源与提示词（v1.31）
 

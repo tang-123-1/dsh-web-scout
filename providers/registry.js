@@ -25,7 +25,7 @@
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,47}$/;
 const KINDS = new Set(['auto', 'video', 'article', 'qa', 'forum', 'hot', 'shop', 'code', 'doc', 'social', 'web']);
-const SOURCES = new Set(['builtin', 'external', 'custom']);
+const SOURCES = new Set(['builtin', 'external', 'package', 'custom']);
 
 export function validateProvider(raw, options = {}) {
   const errors = [];
