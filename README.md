@@ -274,6 +274,24 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | `verify-evidence-live.mjs` | live 证据包预算/缓存/榜单、体检三站真打、未知平台 skipped | 15/15 |
 | `verify-mcp-117.mjs` | MCP 侧五个工具、证据包预算与缓存、体检、缺 query isError | 11/11 |
 
+### 平台体检历史（v1.28）
+
+体检原来是一次性的：点完看到一排圆点，关掉就没了。现在每次体检都会落盘，面板上能看出「这个平台最近一直不稳」还是「只是刚才抖了一下」：
+
+- 每平台保留最近 **50 次**记录（`{at, status, ms}`），成功率与平均耗时按**最近 20 次**算（平均耗时只统计成功的那几次，别让超时把均值拉爆）。
+- 平台网格里，平台名后面多一条 2px 宽的色条：绿=可用、黄=空结果、红=失败/需登录；右侧圆点仍是「这一次」的状态。
+- 悬停标题里带「成功率 67% · 平均 400ms · 最近 3 次」。
+- `health.check` 默认记，`remember:false` 只体检不落盘；`health.history` 读统计，`health.forget` 清一个或全部。
+- 配置文件里坏掉的条目（状态乱写、缺时间、不是数组）在加载时就被丢掉，不会把面板画崩。
+
+```jsonc
+{"op":"health.check","platforms":["bing","zhihu"]}      // 体检并记录
+{"op":"health.history","platforms":["bing"]}            // → rows:[{id,label,samples,okRate,avgMs,lastAt,lastStatus,series}]
+{"op":"health.forget","platform":"zhihu"}               // 清一个；不传 platform 清全部
+```
+
+实测：真体检一次 bing 记下 `{status:"ok",ms:715}`，`health.history` 立刻读到 `samples:1 / okRate:1 / avgMs:715`。
+
 ### 原文引文（v1.27）
 
 证据包原来只给「标题 + 摘要」，摘要常常是站点自己截的，核对起来还得点进去。现在会给前几条补一句**原文里真的有**的话：

@@ -35,6 +35,7 @@ window.__ModuleLoader__.load({
         healthRun: '体检',
         healthBusy: '体检中…',
         healthTally: '体检：可用 {ok} · 空 {empty} · 被拦 {blocked} · 需登录 {login} · 出错 {error}',
+    healthRate: '成功率 {rate}% · 平均 {ms}ms · 最近 {n} 次',
   watchSection: '追踪',
   watchHint: '盯一个话题：每轮只回新出现的链接（按间隔后台自动跑）',
   watchQuery: '要盯的关键词',
@@ -147,6 +148,7 @@ window.__ModuleLoader__.load({
         healthRun: 'Check',
         healthBusy: 'Checking…',
         healthTally: 'Health: ok {ok} · empty {empty} · blocked {blocked} · login {login} · error {error}',
+    healthRate: '{rate}% ok · avg {ms}ms · last {n}',
   watchSection: 'Watches',
   watchHint: 'Track a topic: each run only returns links it has never seen before.',
   watchQuery: 'Topic to watch',
@@ -802,6 +804,7 @@ function statusStyle(status) {
   const [researchBusy, setResearchBusy] = React.useState(false);
   const [health, setHealth] = React.useState(null);
   const [healthBusy, setHealthBusy] = React.useState(false);
+  const [healthHistory, setHealthHistory] = React.useState({});
       const [view, setView] = React.useState(() => {
         try {
           return window.localStorage.getItem('web-scout-view') === 'compact' ? 'compact' : 'card';
@@ -916,6 +919,7 @@ function statusStyle(status) {
       const feedOnly = selected.length > 0 && selected.every((id) => listIds.has(id));
 
       React.useEffect(() => {
+        refreshHealthHistory();
         let alive = true;
         post('catalog')
           .then((value) => {
@@ -1273,6 +1277,13 @@ function statusStyle(status) {
     if (mode) window.setTimeout(() => setChatNote(''), 4000);
   };
   const healthOf = (id) => (health && health[id]) || null;
+  const historyOf = (id) => healthHistory[id] || null;
+  // v1.28：每平台最近 20 次的成功/空/失败画成一条 2px 宽的色条，比一个圆点能看出趋势。
+  const healthStrip = (row) => {
+    if (!row || !Array.isArray(row.series) || row.series.length === 0) return null;
+    const color = (value) => (value >= 1 ? '#3fa46a' : value > 0 ? '#d6a13c' : '#cf5b56');
+    return h('span', { style: { display: 'inline-flex', gap: '1px', marginLeft: '4px', verticalAlign: 'middle' } }, row.series.slice(-20).map((value, index) => h('span', { key: index, style: { width: '2px', height: '9px', borderRadius: '1px', background: color(value), opacity: 0.85 } })));
+  };
   const healthDotStyle = (status) => {
     if (status === 'ok') return S.dotOk;
     if (status === 'error') return S.dotBad;
@@ -1350,6 +1361,16 @@ function statusStyle(status) {
       setResearchBusy(false);
     }
   };
+  const refreshHealthHistory = async () => {
+    try {
+      const data = await post('health.history', {});
+      const map = {};
+      for (const row of (data && data.rows) || []) map[row.id] = row;
+      setHealthHistory(map);
+    } catch {
+      /* 历史读不到不影响体检 */
+    }
+  };
   const runHealth = async (ids) => {
     if (healthBusy) return;
     setHealthBusy(true);
@@ -1362,6 +1383,7 @@ function statusStyle(status) {
       const map = {};
       for (const item of (report && report.items) || []) map[item.id] = item;
       setHealth(map);
+      await refreshHealthHistory();
     } catch {
       setHealth({});
     } finally {
@@ -1694,8 +1716,10 @@ function statusStyle(status) {
                           key: item.id,
                           type: 'button',
                           title: healthOf(item.id)
-                            ? `${item.backend || ''} · ${healthOf(item.id).status} · ${healthOf(item.id).ms || 0}ms${healthOf(item.id).note ? ` · ${healthOf(item.id).note}` : ''}`
-                            : item.backend || '',
+                            ? `${item.backend || ''} · ${healthOf(item.id).status} · ${healthOf(item.id).ms || 0}ms${healthOf(item.id).note ? ` · ${healthOf(item.id).note}` : ''}${historyOf(item.id) ? ` · ${fill(t('healthRate'), { rate: Math.round((historyOf(item.id).okRate || 0) * 100), ms: historyOf(item.id).avgMs || 0, n: historyOf(item.id).samples || 0 })}` : ''}`
+                            : historyOf(item.id)
+                              ? fill(t('healthRate'), { rate: Math.round((historyOf(item.id).okRate || 0) * 100), ms: historyOf(item.id).avgMs || 0, n: historyOf(item.id).samples || 0 })
+                              : item.backend || '',
                           style: merge(S.mini, chips.includes(item.id) ? S.miniOn : null),
                           onClick: (event) => {
                             toggleChip(item.id);
@@ -1706,8 +1730,11 @@ function statusStyle(status) {
                           ? [
                               h('span', { key: 'dot', style: merge(healthDotStyle(healthOf(item.id).status), { marginRight: '5px' }) }),
                               item.label || item.id,
+                              healthStrip(historyOf(item.id)),
                             ]
-                          : item.label || item.id,
+                          : historyOf(item.id)
+                            ? [item.label || item.id, healthStrip(historyOf(item.id))]
+                            : item.label || item.id,
                       ),
                     ),
                   ),

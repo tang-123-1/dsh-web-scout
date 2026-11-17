@@ -703,7 +703,57 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           proxy,
           cookies: settings.cookies || {},
         });
+        // v1.28 / A3：体检结果落盘（每平台最近 50 次），面板据此画色条、算成功率。
+        if (payload.remember !== false) {
+          const at = new Date().toISOString();
+          const next = { ...(store.get('health') || {}) };
+          for (const item of report.items || []) {
+            if (!item || typeof item.id !== 'string' || item.id === '') continue;
+            const list = Array.isArray(next[item.id]) ? next[item.id].slice() : [];
+            list.push({ at, status: item.status || 'error', ms: Math.max(0, Math.round(Number(item.ms) || 0)) });
+            next[item.id] = list.slice(-50);
+          }
+          store.patch({ health: next });
+          await store.flush();
+        }
         return { ...report, text: formatHealth(report) };
+      }
+      case 'health.history': {
+        // 面板/Agent 用：每平台的成功率、平均耗时、最近 20 次状态，够画一条色条。
+        const raw = store.get('health') || {};
+        const only = Array.isArray(payload.platforms) && payload.platforms.length > 0 ? new Set(payload.platforms) : null;
+        const rows = [];
+        for (const [id, list] of Object.entries(raw)) {
+          if (only && !only.has(id)) continue;
+          if (!Array.isArray(list) || list.length === 0) continue;
+          const tail = list.slice(-20);
+          const ok = tail.filter((entry) => entry.status === 'ok').length;
+          const times = tail.filter((entry) => entry.status === 'ok' && entry.ms > 0).map((entry) => entry.ms);
+          rows.push({
+            id,
+            label: (PLATFORMS.get(id) && (PLATFORMS.get(id).label || PLATFORMS.get(id).zh)) || id,
+            samples: list.length,
+            okRate: Number((ok / Math.max(1, tail.length)).toFixed(2)),
+            avgMs: times.length > 0 ? Math.round(times.reduce((sum, value) => sum + value, 0) / times.length) : 0,
+            lastAt: list[list.length - 1].at,
+            lastStatus: list[list.length - 1].status,
+            series: tail.map((entry) => entry.status === 'ok' ? 1 : entry.status === 'empty' ? 0.5 : 0),
+          });
+        }
+        rows.sort((left, right) => right.samples - left.samples);
+        return { rows, total: rows.length };
+      }
+      case 'health.forget': {
+        const id = String(payload.platform || '');
+        const next = { ...(store.get('health') || {}) };
+        if (id === '') {
+          for (const key of Object.keys(next)) delete next[key];
+        } else {
+          delete next[id];
+        }
+        store.patch({ health: next });
+        await store.flush();
+        return { removed: id === '' ? 'all' : id, left: Object.keys(next).length };
       }
       case 'config': {
         return redactSettings(store.patch(payload.patch || {}));

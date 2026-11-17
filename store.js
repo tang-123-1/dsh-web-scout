@@ -30,6 +30,8 @@ const DEFAULTS = {
   accounts: {},
   hotSnapshot: {},
   watches: [],
+  // v1.28：健康检查只保留最近 50 次/平台，够画色条、够算成功率，又不会把配置文件撑大。
+  health: {},
 };
 
 function configDir() {
@@ -37,6 +39,34 @@ function configDir() {
   const profile = process.env.DSH_PROFILE ? [process.env.DSH_HOME && path.join(process.env.DSH_HOME, 'profiles', process.env.DSH_PROFILE)] : [];
   const base = process.env.DSH_PROFILE_DIR || profile[0] || home;
   return base;
+}
+
+const HEALTH_LIMIT = 50;
+const HEALTH_STATUS = new Set(['ok', 'timeout', 'blocked', 'login', 'error', 'empty', 'skipped']);
+
+/** 健康历史：每个平台一条环形记录，只留最近 HEALTH_LIMIT 次。坏数据直接丢，不让它污染面板。 */
+function normalizeHealth(value) {
+  const out = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+  for (const [id, list] of Object.entries(value)) {
+    if (typeof id !== 'string' || id === '' || id.length > 60) continue;
+    if (!Array.isArray(list)) continue;
+    const rows = [];
+    for (const entry of list) {
+      if (!entry || typeof entry !== 'object') continue;
+      const at = String(entry.at || '');
+      if (!/^\d{4}-\d{2}-\d{2}T/.test(at)) continue;
+      const ms = Number(entry.ms);
+      rows.push({
+        at: at.slice(0, 32),
+        status: HEALTH_STATUS.has(entry.status) ? entry.status : 'error',
+        ms: Number.isFinite(ms) && ms >= 0 ? Math.min(60000, Math.round(ms)) : 0,
+      });
+      if (rows.length >= HEALTH_LIMIT) break;
+    }
+    if (rows.length > 0) out[id] = rows;
+  }
+  return out;
 }
 
 function normalizeHotSnapshot(value) {
@@ -164,6 +194,7 @@ function normalize(raw) {
   }
   out.hotSnapshot = normalizeHotSnapshot(value.hotSnapshot);
   out.watches = normalizeWatches(value.watches);
+  out.health = normalizeHealth(value.health);
     return out;
 }
 

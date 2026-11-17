@@ -37,7 +37,7 @@ import {
 import { createApi } from '../api.js';
 
 const SERVER_NAME = 'web-scout';
-const SERVER_VERSION = '1.27.0';
+const SERVER_VERSION = '1.28.0';
 const SUPPORTED_PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const DEFAULT_PROTOCOL = '2024-11-05';
 
