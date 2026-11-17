@@ -1,0 +1,20 @@
+{
+  "result_vos": [
+    {
+      "title": "<em>cordis</em> 插件开发实践",
+      "url": "https://blog.csdn.net/aaa/article/details/123456?spm=1001",
+      "digest": "从 apply 到 inject，写一个可复用的 cordis 插件。",
+      "create_time": "1700000000000",
+      "author": "aaa",
+      "view_num": 1234
+    },
+    {
+      "title": "DSH 联网检索插件拆解",
+      "url": "https://blog.csdn.net/bbb/article/details/654321",
+      "body": "46 个平台、两级缓存、一个 MCP 服务。",
+      "create_time": "1700000100000",
+      "author": "bbb",
+      "view_num": 99
+    }
+  ]
+}

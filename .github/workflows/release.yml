@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   package:
@@ -18,13 +19,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          registry-url: https://registry.npmjs.org
 
-      - name: 语法检查
+      - name: 语法检查（跟随仓库里全部 js/mjs）
         run: |
-          for file in index.js api.js engines.js net.js store.js open.js login.js \
-                      browserCookies.js browserAuth.js client.js scripts/smoke.mjs; do
+          set -e
+          git ls-files '*.js' '*.mjs' | grep -v '^docs/' | while read -r file; do
+            echo "check $file"
             node --check "$file"
           done
+
+      - name: 校验 JSON 与清单
+        run: |
+          node -e "for (const f of ['package.json','locale/zh.json','locale/en.json']) JSON.parse(require('fs').readFileSync(f,'utf8')); console.log('json ok')"
+          node -e "const p=require('./package.json'); if (p.dsh?.bundle?.patch!=='./cordis.patch.yml') throw new Error('bundle patch missing'); if (!p.dsh?.client?.platform) throw new Error('client platform missing'); console.log('manifest ok', p.version)"
+
+      - name: 离线测试（有 test 目录就跑）
+        run: |
+          if [ -d test ]; then npm test; else echo "no test dir, skip"; fi
 
       - name: 打包（不含 .git / docs / .github）
         run: |
@@ -47,6 +59,25 @@ jobs:
           files: dist/web-scout-*
           generate_release_notes: true
           body: |
-            安装：解压后让 DSH 执行
-            `plugin_manager action=install_bundle target=<解压目录绝对路径>`，
-            再执行一次 `set_bundle target=@local/web-scout enabled=false` → `enabled=true`，刷新页面即可。
+            安装（任选其一）：
+
+            1) npm 一行装：
+               `dsh plugin --profile <名字> add dsh-web-scout@${{ github.ref_name }}`
+            2) 解压附件后让 DSH 执行
+               `plugin_manager action=install_bundle target=<解压目录绝对路径>`
+
+            装完执行一次 `set_bundle target=dsh-web-scout enabled=false` → `enabled=true`，刷新页面即可。
+
+      - name: 发布到 npm（版本已存在则跳过）
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -e
+          VERSION="$(node -p "require('./package.json').version")"
+          NAME="$(node -p "require('./package.json').name")"
+          if npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "npm already has ${NAME}@${VERSION}, skip publish"
+            exit 0
+          fi
+          npm publish --provenance --access public
+          echo "published ${NAME}@${VERSION}"

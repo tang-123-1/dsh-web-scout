@@ -1,0 +1,20 @@
+{
+  "objects": [
+    {
+      "package": {
+        "name": "cordis",
+        "version": "3.18.0",
+        "description": "A meta-framework for plugins.",
+        "date": "2024-05-01T00:00:00.000Z"
+      }
+    },
+    {
+      "package": {
+        "name": "dsh-web-scout",
+        "version": "1.23.0",
+        "description": "Web search and research for DeepSeek Harness.",
+        "date": "2026-11-13T00:00:00.000Z"
+      }
+    }
+  ]
+}

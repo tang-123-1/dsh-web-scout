@@ -1,5 +1,19 @@
 # 变更记录
 
+## [1.24.0] - 2026-11-17
+
+### 工程化（A2 + A1）
+
+- **tag 自动发布 npm**：`.github/workflows/release.yml` 在推 `v*` tag 时除了打包 Release 附件，还会 `npm publish --provenance --access public`；版本已存在则自动跳过，token 走仓库 secret `NPM_TOKEN`（不再依赖本地 7 天有效的 granular token）。
+- **语法检查改为跟随仓库**：两个 workflow 都不再维护硬编码文件清单，改为 `git ls-files '*.js' '*.mjs'` 全量 `node --check`，新增文件（`cache.js`、`mcp/server.mjs`、`providers/*`、`test/*`）不会再漏检。
+- **解析器夹具回归（新）**：`test/parsers.test.mjs` + `test/fixtures/`（11 个夹具）离线锁定 10 个后端与两个清洗函数的解析契约——必应自站过滤、360 桌面验证码自动切 `m.so.com` 并丢弃推荐位、百度 `mu` 真地址、头条 SSR script、微信中转壳标记、CSDN/掘金/V2EX/豆瓣/npm 字段映射。
+- 新增 `npm test`（`node --test`），CI 与 release 都会跑；`test/` 不打进 npm 包（`files` 未包含）。
+
+### 验证
+
+- `node --test`：**11/11 通过**（首轮 1 红：CSDN 夹具误写成 `{code,data:{result_vos}}`，与真实响应 `{result_vos}` 不符，修夹具后转绿）。
+- `git ls-files '*.js' '*.mjs'` 17 个文件 `node --check` 全过；两个 workflow YAML 结构校验通过。
+
 ## [1.23.0] - 2026-11-13
 
 ### 改名与 npm 发布

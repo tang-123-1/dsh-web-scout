@@ -1,0 +1,32 @@
+{
+  "err_no": 0,
+  "err_msg": "success",
+  "has_more": false,
+  "cursor": "",
+  "data": [
+    {
+      "result_model": {
+        "article_info": {
+          "article_id": "7000000000000000001",
+          "title": "cordis 插件热重载是怎么实现的",
+          "brief_content": "讲讲 apply 的加载顺序与依赖注入。",
+          "ctime": "1700000000",
+          "digg_count": 42,
+          "view_count": 2048
+        }
+      }
+    },
+    {
+      "result_model": {
+        "article_info": {
+          "article_id": "7000000000000000002",
+          "title": "给 DSH 写联网插件的一周",
+          "brief_content": "从 46 个平台到 MCP 服务。",
+          "ctime": "1700000500",
+          "digg_count": 7,
+          "view_count": 300
+        }
+      }
+    }
+  ]
+}
