@@ -33,6 +33,7 @@
 - **可插拔**：外部 provider 丢进 `<profile>/web-scout-providers/` 即生效，热加载。
 - **导出与历史**：结果按相关度/平台排序，一键复制 Markdown / CSV；最近 20 条查询可点回重跑；Alt+W 随时开面板。
 - **重排与熔断**：查询词重排（可插外部重排器），连续失败的平台自动跳过、冷却后自动恢复。
+- **MCP 资源与提示词**：平台目录/体检历史/最近查询等 5 个资源、3 个提示词，工具调用带进度通知。
 - **话题追踪**：盯一个查询词，后台按间隔重跑，每轮只回「没见过」的新链接（v1.25）。
 - **浏览器渲染**：SPA / 要签名的站点用插件自管浏览器真渲染一次再抽结果，失败退回入口行（v1.26）。
 
@@ -275,6 +276,26 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | `verify-evidence.mjs` | 去重、打分排序、每平台配额、预算、摘录命中、缺口、榜单空 query、新鲜度、体检跳过规则 | 19/19 |
 | `verify-evidence-live.mjs` | live 证据包预算/缓存/榜单、体检三站真打、未知平台 skipped | 15/15 |
 | `verify-mcp-117.mjs` | MCP 侧五个工具、证据包预算与缓存、体检、缺 query isError | 11/11 |
+
+### MCP 资源与提示词（v1.31）
+
+MCP 服务不再只有 7 个工具：宿主可以直接把平台目录、体检历史、最近查询、设置和追踪列表当**资源**读，也可以拿现成的**提示词**把一个模糊请求变成一次明确的检索。
+
+**资源**（`resources/list` + `resources/read`，全部 `application/json`）
+- `web-scout://platforms`：平台目录（id、中文名、kind、是否榜单、是否需要登录、站内搜索地址）。
+- `web-scout://health`：每个平台最近 50 次体检记录、成功率、平均耗时与 20 段色条序列。
+- `web-scout://recent`：最近 20 次检索（7 天 TTL）。
+- `web-scout://config`：当前设置（代理等敏感字段已脱敏）。
+- `web-scout://watches`：话题追踪列表，含最近一次新增数与下次到期时间。
+- 模板 `web-scout://platform/{id}`：单个平台的目录信息 + 体检历史 + 熔断状态，例如 `web-scout://platform/gitee`。未知资源回 `-32602` 并说明原因。
+
+**提示词**（`prompts/list` + `prompts/get`）
+- `research_topic(topic, angle?, depth?)`：`quick` 走 3 秒预算单轮，`deep` 走 20 秒三轮；要求按「结论 → 证据 → 缺口」回答，且只引用返回里的原文引文。
+- `platform_sweep(topic, platforms?)`：多平台横评，明确要求把 `skipped`（熔断中，剩余 N 分钟）和需要登录的平台写出来，不许把空结果当成「没有」。
+- `watch_topic(topic, everyMinutes?)`：建一个追踪并立刻跑首轮（首轮 `added=0` 是建立基线，正常）。
+
+**进度通知**
+- `tools/call` 收到 `_meta.progressToken` 时会发 `notifications/progress`（开始 `0`、结束 `1`，失败也发 `1` 并带失败原因），长任务在宿主侧不再是一片空白。
 
 ### 重排与熔断（v1.30）
 

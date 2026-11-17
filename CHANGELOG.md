@@ -1,5 +1,20 @@
 # 变更记录
 
+## [1.31.0] - 2026-11-17
+
+MCP 深化：资源、提示词与进度通知。
+
+### 新增
+- `resources/list` / `resources/templates/list` / `resources/read`：5 个资源（`platforms`、`health`、`recent`、`config`、`watches`）+ 模板 `web-scout://platform/{id}`（目录 + 体检历史 + 熔断状态）；未知资源回 `-32602`。
+- `prompts/list` / `prompts/get`：`research_topic`（quick/deep 两档预算）、`platform_sweep`（要求写出熔断与需登录的平台）、`watch_topic`（建追踪并跑首轮）。
+- `tools/call` 支持 `_meta.progressToken`：开始发 `progress: 0`、结束（成功或失败）发 `progress: 1` 的 `notifications/progress`。
+- `initialize` 的 capabilities 增加 `resources` / `prompts`，instructions 写明资源 URI 与提示词名。
+
+### 自测
+- `_probe/verify-mcp-c3.mjs` 16/16（用真实 stdio 会话跑 initialize → resources → prompts → 带 progressToken 的工具调用）。
+- `test/mcp-c3.test.mjs` 2 项（资源清单与模板、提示词展开、未知资源错误码）；全量 `node --test` **59/59**。
+- 本轮无缺陷需要修：探针一次通过，未出现资源读取失败或提示词参数丢失。
+
 ## [1.30.0] - 2026-11-17
 
 结果质量与可用性：可插拔重排 + 平台熔断。

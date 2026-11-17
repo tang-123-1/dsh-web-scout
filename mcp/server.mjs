@@ -37,7 +37,7 @@ import {
 import { createApi } from '../api.js';
 
 const SERVER_NAME = 'web-scout';
-const SERVER_VERSION = '1.30.0';
+const SERVER_VERSION = '1.31.0';
 const SUPPORTED_PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const DEFAULT_PROTOCOL = '2024-11-05';
 
@@ -525,6 +525,152 @@ const TOOLS = [
   },
 ];
 
+// ---------------------------------------------------------------- 资源与提示词
+const RESOURCE_DEFS = [
+  {
+    uri: 'web-scout://platforms',
+    name: 'platforms',
+    title: '平台目录',
+    description: '所有可用平台（内置 + provider）及其 kind / 是否榜单 / 是否需要登录 / 站内搜索地址。',
+    mimeType: 'application/json',
+  },
+  {
+    uri: 'web-scout://health',
+    name: 'health',
+    title: '平台体检历史',
+    description: '每个平台最近 50 次体检记录、成功率、平均耗时与 20 段色条序列；熔断判定就是基于这份数据。',
+    mimeType: 'application/json',
+  },
+  {
+    uri: 'web-scout://recent',
+    name: 'recent',
+    title: '最近查询',
+    description: '最近 20 次检索（7 天 TTL），可用来接着上次的话题继续。',
+    mimeType: 'application/json',
+  },
+  {
+    uri: 'web-scout://config',
+    name: 'config',
+    title: '当前设置',
+    description: '默认平台、代理、缓存 TTL、重排模式、熔断阈值等（敏感字段已脱敏）。',
+    mimeType: 'application/json',
+  },
+  {
+    uri: 'web-scout://watches',
+    name: 'watches',
+    title: '话题追踪',
+    description: '已配置的 watch 列表，含最近一次新增数量、见过的链接数与下次到期时间。',
+    mimeType: 'application/json',
+  },
+];
+
+const RESOURCE_TEMPLATES = [
+  {
+    uriTemplate: 'web-scout://platform/{id}',
+    name: 'platform',
+    title: '单个平台',
+    description: '单个平台的目录信息 + 体检历史 + 熔断状态，例如 web-scout://platform/gitee。',
+    mimeType: 'application/json',
+  },
+];
+
+const PROMPTS = [
+  {
+    name: 'research_topic',
+    title: '研究一个话题',
+    description: '把一次多轮检索写成明确的调用：先规划平台，再要证据包和引文。',
+    arguments: [
+      { name: 'topic', description: '要研究的问题或关键词', required: true },
+      { name: 'angle', description: '关心的角度，例如「实现细节」「对比评测」「踩坑」', required: false },
+      { name: 'depth', description: 'quick（3 秒预算）或 deep（20 秒预算）', required: false },
+    ],
+  },
+  {
+    name: 'platform_sweep',
+    title: '多平台横评',
+    description: '同一个关键词在指定平台各搜一遍，按平台分组列出，并指出哪些平台被熔断或需要登录。',
+    arguments: [
+      { name: 'topic', description: '关键词', required: true },
+      { name: 'platforms', description: '逗号分隔的平台 id，例如 gitee,csdn,juejin', required: false },
+    ],
+  },
+  {
+    name: 'watch_topic',
+    title: '盯住一个话题',
+    description: '创建一个话题追踪：只回新出现的链接，并在下次运行时报告增量。',
+    arguments: [
+      { name: 'topic', description: '要盯的关键词', required: true },
+      { name: 'everyMinutes', description: '间隔分钟数（10–1440，默认 60）', required: false },
+    ],
+  },
+];
+
+function apiHandle() {
+  return createApi({ store, cache: getCache() });
+}
+
+async function readResource(uri) {
+  const raw = String(uri || '');
+  if (!raw.startsWith('web-scout://')) throw new Error(`不支持的资源：${raw}`);
+  const rest = raw.slice('web-scout://'.length).replace(/\/+$/, '');
+  const api = apiHandle();
+  let data;
+  if (rest === 'platforms') data = await api.perform('catalog', {});
+  else if (rest === 'health') data = await api.perform('health.history', {});
+  else if (rest === 'recent') data = await api.perform('recent.list', {});
+  else if (rest === 'config') data = await api.perform('config', {});
+  else if (rest === 'watches') data = await api.perform('watch.list', {});
+  else if (rest.startsWith('platform/')) {
+    const id = decodeURIComponent(rest.slice('platform/'.length));
+    const catalog = await api.perform('catalog', {});
+    const entry = (catalog.platforms || []).find((item) => item.id === id);
+    if (!entry) throw new Error(`没有这个平台：${id}`);
+    const health = await api.perform('health.history', { platforms: [id] });
+    const breaker = await api.perform('health.breaker', {});
+    data = {
+      platform: entry,
+      health: (health.rows || [])[0] || null,
+      breaker: (breaker.tripped || []).find((item) => item.id === id) || null,
+    };
+  } else {
+    throw new Error(`不支持的资源：${raw}`);
+  }
+  return { contents: [{ uri: raw, mimeType: 'application/json', text: JSON.stringify(data, null, 2) }] };
+}
+
+function getPrompt(name, args) {
+  const value = args && typeof args === 'object' ? args : {};
+  const topic = typeof value.topic === 'string' ? value.topic.trim() : '';
+  if (topic === '') throw new Error('缺少 topic');
+  if (name === 'research_topic') {
+    const angle = typeof value.angle === 'string' ? value.angle.trim() : '';
+    const depth = String(value.depth || 'quick').toLowerCase() === 'deep' ? 'deep' : 'quick';
+    const budget = depth === 'deep' ? 20000 : 3000;
+    const text =
+      `用 web_scout_research 研究「${topic}」${angle ? `，重点看${angle}` : ''}。\n` +
+      `参数：budgetMs=${budget}、maxRounds=${depth === 'deep' ? 3 : 1}、minItems=${depth === 'deep' ? 8 : 4}、refresh=true。\n` +
+      `拿到结果后按「结论 → 证据（带链接与平台）→ 分歧或缺口」三段回答；只引用返回里的原文引文，不要自己补事实。` +
+      (angle ? `\n如果证据不足以支撑「${angle}」，直接说明缺什么，不要绕。` : '');
+    return { description: `研究：${topic}`, messages: [{ role: 'user', content: { type: 'text', text } }] };
+  }
+  if (name === 'platform_sweep') {
+    const platforms = typeof value.platforms === 'string' && value.platforms.trim() !== '' ? value.platforms.trim() : 'auto';
+    const text =
+      `用 web_scout_search 在 ${platforms} 上搜「${topic}」，每站取 5–8 条（limit=8、pages=2）。\n` +
+      `按平台分组列标题 + 链接；某个平台 status 是 skipped 就写「熔断中，剩余 N 分钟」，需要登录就写「需登录」，不要把空结果当成没有这个东西。\n` +
+      `最后给一行跨平台的共同点。`;
+    return { description: `横评：${topic}`, messages: [{ role: 'user', content: { type: 'text', text } }] };
+  }
+  if (name === 'watch_topic') {
+    const every = Number(value.everyMinutes) || 60;
+    const text =
+      `用 web_scout_watch 建一个追踪：action=add、query=${JSON.stringify(topic)}、everyMinutes=${Math.min(1440, Math.max(10, every))}。\n` +
+      `建完用 action=run 立刻跑第一次（首轮只建基线，返回 added=0 是正常的）。之后每次 action=run 只报告新增链接。`;
+    return { description: `追踪：${topic}`, messages: [{ role: 'user', content: { type: 'text', text } }] };
+  }
+  throw new Error(`未知提示词：${name}`);
+}
+
 // ---------------------------------------------------------------- JSON-RPC
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -546,12 +692,21 @@ async function handleToolCall(id, params) {
     return;
   }
   const args = params && params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
+  const token = params && params._meta && typeof params._meta === 'object' ? params._meta.progressToken : undefined;
+  const progresses = token !== undefined && token !== null;
+  const notify = (progress, message) => {
+    if (!progresses) return;
+    send({ jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: token, progress, total: 1, message } });
+  };
+  notify(0, `开始：${name}`);
   try {
     const { payload, text } = await tool.run(args);
+    notify(1, `完成：${name}`);
     reply(id, { content: [{ type: 'text', text }], structuredContent: payload, isError: false });
   } catch (error) {
     const message = String((error && error.message) || error);
     log(`工具 ${name} 失败：`, message);
+    notify(1, `失败：${name} — ${message}`);
     reply(id, { content: [{ type: 'text', text: `执行失败：${message}` }], isError: true });
   }
 }
@@ -566,10 +721,15 @@ async function handle(message) {
       const protocolVersion = SUPPORTED_PROTOCOLS.includes(requested) ? requested : DEFAULT_PROTOCOL;
       reply(id, {
         protocolVersion,
-        capabilities: { tools: { listChanged: false } },
+        capabilities: {
+          tools: { listChanged: false },
+          resources: { subscribe: false, listChanged: false },
+          prompts: { listChanged: false },
+        },
         serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
         instructions:
-          'web-scout 提供联网检索与正文读取：web_scout_search 搜索（可用平台名）、web_scout_read 抓正文、web_scout_providers 看可用平台。结果默认带缓存。',
+          'web-scout 提供联网检索与正文读取：web_scout_search 搜索（可用平台名）、web_scout_read 抓正文、web_scout_evidence 拿带引文的证据包、web_scout_research 多轮研究、web_scout_watch 盯话题、web_scout_providers 看可用平台。' +
+          '资源：web-scout://platforms / health / recent / config / watches，以及 web-scout://platform/{id}。提示词：research_topic / platform_sweep / watch_topic。结果默认带缓存；传 refresh=true 重新抓。',
       });
       return;
     }
@@ -588,11 +748,32 @@ async function handle(message) {
       await handleToolCall(id, params);
       return;
     case 'resources/list':
-      reply(id, { resources: [] });
+      reply(id, { resources: RESOURCE_DEFS });
       return;
+    case 'resources/templates/list':
+      reply(id, { resourceTemplates: RESOURCE_TEMPLATES });
+      return;
+    case 'resources/read': {
+      const uri = params && typeof params.uri === 'string' ? params.uri : '';
+      try {
+        reply(id, await readResource(uri));
+      } catch (error) {
+        fail(id, -32602, String((error && error.message) || error));
+      }
+      return;
+    }
     case 'prompts/list':
-      reply(id, { prompts: [] });
+      reply(id, { prompts: PROMPTS });
       return;
+    case 'prompts/get': {
+      const name = params && typeof params.name === 'string' ? params.name : '';
+      try {
+        reply(id, getPrompt(name, params && params.arguments));
+      } catch (error) {
+        fail(id, -32602, String((error && error.message) || error));
+      }
+      return;
+    }
     case 'shutdown':
       if (!isNotification) reply(id, {});
       return;
