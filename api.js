@@ -144,7 +144,7 @@ function ttlFrom(settings) {
   return Math.min(CACHE_TTL_MAX, Math.max(CACHE_TTL_MIN, raw));
 }
 
-export function createApi({ store, defaults, readMessages, clientGraph, cache: injectedCache, providers: providerBridge }) {
+export function createApi({ store, defaults, readMessages, clientGraph, cache: injectedCache, providers: providerBridge, search: searchImpl }) {
   const cache =
     injectedCache ||
     createCache({
@@ -276,6 +276,140 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
     delete accounts[target.id];
     store.patch({ cookies, accounts });
     return { platform: target.id, removed: Object.keys(settings.cookies || {}).length - Object.keys(cookies).length };
+  }
+
+
+  // ---- 话题追踪（watch）----
+  // 一个 watch 记住「查询 + 平台 + 间隔 + 已经见过的 URL」，每次跑只回新增的那几条。
+  const WATCH_LIMIT = 12;
+  const WATCH_SEEN_MAX = 400;
+
+  function watchKey(item) {
+    return String((item && item.url) || '')
+      .replace(/#.*$/, '')
+      .replace(/[?&](utm_[^=&]+|spm|from|source|ref|scene)=[^&]*/g, '')
+      .replace(/\?&$/, '')
+      .toLowerCase();
+  }
+
+  function watchList() {
+    const value = store.get('watches');
+    return Array.isArray(value) ? value : [];
+  }
+
+  async function saveWatches(list) {
+    store.patch({ watches: list.slice(0, WATCH_LIMIT) });
+    try {
+      await store.flush();
+    } catch {
+      /* 写盘失败不影响这次运行的结果 */
+    }
+  }
+
+  function nextWatchId(list) {
+    return 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5) + list.length;
+  }
+
+  function normalizeWatch(payload) {
+    const query = String(payload.query || '').trim();
+    if (query === '') throw new Error('watch.add 需要 query');
+    const platforms = Array.isArray(payload.platforms)
+      ? payload.platforms.map((item) => String(item)).filter(Boolean).slice(0, 8)
+      : [];
+    const everyMinutes = Math.min(1440, Math.max(10, Number(payload.everyMinutes) || 60));
+    const minNew = Math.min(50, Math.max(1, Number(payload.minNew) || 1));
+    return { query, platforms, everyMinutes, minNew };
+  }
+
+  function watchDueAt(entry) {
+    const every = Math.min(1440, Math.max(10, Number(entry.everyMinutes) || 60)) * 60000;
+    const last = Date.parse(entry.lastRunAt || '') || 0;
+    if (last === 0) return 0;
+    return last + every;
+  }
+
+  async function runWatch(entry, options = {}) {
+    const settings = store.snapshot();
+    const query = String(entry.query || '').trim();
+    if (query === '') throw new Error('watch.query 为空');
+    const platforms = resolvePlatforms(entry.platforms, settings.defaultPlatforms).slice(
+      0,
+      Math.min(8, Number(settings.maxPlatforms) || 8),
+    );
+    const started = Date.now();
+    const search = options.search || searchImpl || runSearch;
+    const result = await search({
+      query,
+      platforms,
+      limit: Math.min(20, Number(options.limit) || 12),
+      pages: 1,
+      timeoutMs: Math.min(20000, Number(settings.timeoutMs) || 12000),
+      proxy: settings.proxy || undefined,
+      cookies: settings.cookies || {},
+      defaultPlatforms: settings.defaultPlatforms,
+      maxPlatforms: settings.maxPlatforms,
+    });
+    const rows = Array.isArray(result && result.results) ? result.results : [];
+    const seen = new Set(Array.isArray(entry.seen) ? entry.seen : []);
+    const isFirst = seen.size === 0;
+    const fresh = [];
+    for (const item of rows) {
+      const key = watchKey(item);
+      if (key === '' || seen.has(key)) continue;
+      seen.add(key);
+      fresh.push(item);
+    }
+    const next = {
+      ...entry,
+      platforms,
+      lastRunAt: new Date().toISOString(),
+      lastTookMs: Date.now() - started,
+      lastCount: rows.length,
+      lastNew: isFirst ? 0 : fresh.length,
+      lastError: '',
+      // 本轮没新增时保留上一轮的高亮，面板不会突然空掉
+      lastTop: (isFirst ? rows : fresh.length > 0 ? fresh : Array.isArray(entry.lastTop) ? entry.lastTop : [])
+        .slice(0, 5)
+        .map((item) => ({ title: item.title, url: item.url, platform: item.platform })),
+      seen: Array.from(seen).slice(-WATCH_SEEN_MAX),
+    };
+    await saveWatches(watchList().map((item) => (item.id === entry.id ? next : item)));
+    return {
+      id: next.id,
+      query: next.query,
+      added: isFirst ? 0 : fresh.length,
+      total: rows.length,
+      first: isFirst,
+      tookMs: next.lastTookMs,
+      items: (isFirst ? [] : fresh).slice(0, 10).map((item) => ({
+        title: item.title,
+        url: item.url,
+        platform: item.platform,
+        platformLabel: item.platformLabel,
+      })),
+      platforms: (result.platforms || []).map((item) => ({ id: item.id, status: item.status, count: item.count })),
+    };
+  }
+
+  async function tickWatches(options = {}) {
+    const now = Date.now();
+    const due = watchList().filter((entry) => watchDueAt(entry) <= now);
+    const runs = [];
+    for (const entry of due.slice(0, 4)) {
+      try {
+        const run = await runWatch(entry, options);
+        if (run.added > 0 || run.first) runs.push(run);
+      } catch (error) {
+        const message = String((error && error.message) || error);
+        await saveWatches(
+          watchList().map((item) =>
+            item.id === entry.id ? { ...item, lastError: message, lastRunAt: new Date().toISOString() } : item,
+          ),
+        );
+        runs.push({ id: entry.id, query: entry.query, error: message });
+      }
+    }
+    return { ran: runs.length, runs };
   }
 
   async function perform(op, payload) {
@@ -705,6 +839,68 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           ),
         };
       }
+
+      case 'watch.list': {
+        const list = watchList();
+        const now = Date.now();
+        return {
+          watches: list.map((entry) => ({
+            id: entry.id,
+            query: entry.query,
+            platforms: entry.platforms || [],
+            everyMinutes: entry.everyMinutes,
+            minNew: entry.minNew,
+            lastRunAt: entry.lastRunAt || '',
+            lastNew: entry.lastNew || 0,
+            lastCount: entry.lastCount || 0,
+            lastError: entry.lastError || '',
+            lastTop: entry.lastTop || [],
+            dueInMs: Math.max(0, watchDueAt(entry) - now),
+            seen: undefined,
+          })),
+          limit: WATCH_LIMIT,
+          due: list.filter((entry) => watchDueAt(entry) <= now).length,
+        };
+      }
+      case 'watch.add': {
+        const list = watchList();
+        if (list.length >= WATCH_LIMIT) throw new Error('最多 ' + WATCH_LIMIT + ' 个追踪');
+        const input = normalizeWatch(payload);
+        const entry = {
+          id: nextWatchId(list),
+          ...input,
+          createdAt: new Date().toISOString(),
+          lastRunAt: '',
+          lastCount: 0,
+          lastNew: 0,
+          lastError: '',
+          lastTop: [],
+          seen: [],
+        };
+        await saveWatches([...list, entry]);
+        const firstRun = payload.run === true ? await runWatch(entry) : null;
+        return { added: { ...entry, seen: undefined }, watched: list.length + 1, firstRun };
+      }
+      case 'watch.remove': {
+        const id = String(payload.id || '');
+        const list = watchList();
+        const next = list.filter((entry) => entry.id !== id);
+        if (next.length === list.length) throw new Error('没有这个追踪：' + id);
+        await saveWatches(next);
+        return { removed: id, watched: next.length };
+      }
+      case 'watch.run': {
+        const id = String(payload.id || '');
+        if (id === '') return tickWatches({ limit: payload.limit });
+        const entry = watchList().find((item) => item.id === id);
+        if (!entry) throw new Error('没有这个追踪：' + id);
+        return runWatch(entry, { limit: payload.limit });
+      }
+      case 'watch.clear': {
+        const count = watchList().length;
+        await saveWatches([]);
+        return { cleared: count };
+      }
       default: {
         throw new Error(`unknown op: ${op}`);
       }
@@ -734,5 +930,5 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
     }
   }
 
-  return { handler, perform };
+  return { handler, perform, tickWatches, runWatch };
 }

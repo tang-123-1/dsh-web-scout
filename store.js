@@ -22,6 +22,7 @@ const DEFAULTS = {
   cookies: {},
   accounts: {},
   hotSnapshot: {},
+  watches: [],
 };
 
 function configDir() {
@@ -50,6 +51,43 @@ function normalizeHotSnapshot(value) {
     const at = Number(snap.at);
     out[id] = { at: Number.isFinite(at) ? at : 0, rows };
     if (Object.keys(out).length >= 8) break;
+  }
+  return out;
+}
+
+function normalizeWatches(value) {
+  const out = [];
+  if (!Array.isArray(value)) return out;
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const query = typeof entry.query === 'string' ? entry.query.trim().slice(0, 120) : '';
+    if (query === '') continue;
+    const platforms = Array.isArray(entry.platforms)
+      ? entry.platforms.map((item) => String(item)).filter(Boolean).slice(0, 8)
+      : [];
+    const seen = Array.isArray(entry.seen) ? entry.seen.map((item) => String(item)).filter(Boolean).slice(-400) : [];
+    const lastTop = Array.isArray(entry.lastTop)
+      ? entry.lastTop
+          .filter((item) => item && typeof item.url === 'string')
+          .slice(0, 5)
+          .map((item) => ({ title: String(item.title || '').slice(0, 200), url: item.url.slice(0, 500), platform: String(item.platform || '') }))
+      : [];
+    out.push({
+      id: typeof entry.id === 'string' && entry.id !== '' ? entry.id.slice(0, 64) : 'w' + out.length,
+      query,
+      platforms,
+      everyMinutes: Math.min(1440, Math.max(10, Number(entry.everyMinutes) || 60)),
+      minNew: Math.min(50, Math.max(1, Number(entry.minNew) || 1)),
+      createdAt: typeof entry.createdAt === 'string' ? entry.createdAt : '',
+      lastRunAt: typeof entry.lastRunAt === 'string' ? entry.lastRunAt : '',
+      lastTookMs: Number(entry.lastTookMs) || 0,
+      lastCount: Number(entry.lastCount) || 0,
+      lastNew: Number(entry.lastNew) || 0,
+      lastError: typeof entry.lastError === 'string' ? entry.lastError.slice(0, 300) : '',
+      lastTop,
+      seen,
+    });
+    if (out.length >= 12) break;
   }
   return out;
 }
@@ -118,12 +156,14 @@ function normalize(raw) {
     out.accounts = accounts;
   }
   out.hotSnapshot = normalizeHotSnapshot(value.hotSnapshot);
+  out.watches = normalizeWatches(value.watches);
     return out;
 }
 
 export class ScoutStore {
   constructor(file) {
-    this.file = file || path.join(configDir(), 'web-scout.json');
+    const target = file && typeof file === 'object' ? file.file : file;
+    this.file = target || path.join(configDir(), 'web-scout.json');
     this.state = normalize(undefined);
     this.loaded = false;
     this.pending = undefined;

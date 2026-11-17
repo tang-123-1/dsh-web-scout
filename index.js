@@ -283,6 +283,23 @@ export function apply(ctx, config = {}) {
     return () => timers.forEach((timer) => clearTimeout(timer));
   });
 
+  // 话题追踪的后台调度：每分钟看一次有没有到期的 watch，最多同时跑 4 个。
+  ctx.effect(() => {
+    let running = false;
+    const timer = setInterval(() => {
+      if (running) return;
+      running = true;
+      api
+        .tickWatches()
+        .catch((error) => ctx.logger?.warn?.('web-scout: watch tick failed: ' + String((error && error.message) || error)))
+        .finally(() => {
+          running = false;
+        });
+    }, 60 * 1000);
+    if (typeof timer.unref === 'function') timer.unref();
+    return () => clearInterval(timer);
+  });
+
   const systemPrompt = typeof ctx.get === 'function' ? ctx.get('systemPrompt') : undefined;
   if (systemPrompt && typeof systemPrompt.section === 'function') {
     ctx.effect(() =>
@@ -295,6 +312,7 @@ export function apply(ctx, config = {}) {
           '- `web_scout_search` 会从当前对话自动提取检索词（`query` 可省略），并自动识别用户提到的平台；`platforms` 可显式指定。',
           '- 直连环境常见不可达站点（Google、YouTube、Wikipedia、Reddit 等）会返回 `blocked`/`error` 状态与浏览器入口，此时用 `web_scout_open` 在桌面浏览器打开。',
           '- 需要正文时用 `web_scout_read` 抓取单页正文，再作答并给出链接。',
+          '- 用户想持续盯一个话题时，用 `web_scout_watch` 建一个 watch；之后再 `action=run` 只会拿到新增的链接。',
         ].join('\n'),
       }),
     );
@@ -661,6 +679,43 @@ export function apply(ctx, config = {}) {
         const data = { ...result, cached: false, sessionId: hint.id };
         cache.set(cacheKey, data, Math.min(86400000, Math.max(60000, Number(current.cacheTtlMs) || 21600000)));
         return data;
+      },
+    })),
+  );
+
+  ctx.effect(() =>
+    ctx.tools.register(withPlainOutput({
+      name: 'web_scout_watch',
+      description:
+        'Manage topic watches: a watch remembers a query plus the URLs it has already seen, so each run only returns what is new. action=list shows watches and when they are next due; action=add creates one (query, optional platforms/everyMinutes); action=run runs one by id (or every due watch when id is omitted); action=remove deletes one.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'add', 'run', 'remove', 'clear'], description: 'list | add | run | remove | clear' },
+          query: { type: 'string', description: 'For action=add: the topic to watch.' },
+          platforms: { type: 'array', items: { type: 'string' }, description: 'For action=add: platform ids (defaults to the configured sources).' },
+          everyMinutes: { type: 'number', description: 'For action=add: interval in minutes (10-1440, default 60).' },
+          minNew: { type: 'number', description: 'For action=add: only surface runs with at least this many new items (default 1).' },
+          id: { type: 'string', description: 'For action=run/remove: the watch id.' },
+        },
+        required: ['action'],
+        additionalProperties: false,
+      },
+      output: {
+        schema: JSON_OBJECT,
+        render: (_args, value) => blocks(value),
+      },
+      presentCall: (args) => ({ card: 'generic', title: '话题追踪：' + String((args && args.action) || 'list'), kind: 'search' }),
+      presentResult: (_args, result) => {
+        const value = result && result.value ? result.value : {};
+        const suffix = value.added !== undefined ? `（新增 ${value.added} 条）` : '';
+        return { card: 'generic', title: '话题追踪就绪' + suffix };
+      },
+      execute: async (args) => {
+        const options = args && typeof args === 'object' ? args : {};
+        const action = String(options.action || 'list');
+        const op = action === 'clear' ? 'watch.clear' : `watch.${action === 'add' ? 'add' : action === 'run' ? 'run' : action === 'remove' ? 'remove' : 'list'}`;
+        return api.perform(op, options);
       },
     })),
   );

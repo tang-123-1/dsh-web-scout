@@ -34,9 +34,10 @@ import {
   planQuery,
   research as runResearch,
 } from '../engines.js';
+import { createApi } from '../api.js';
 
 const SERVER_NAME = 'web-scout';
-const SERVER_VERSION = '1.16.0';
+const SERVER_VERSION = '1.25.0';
 const SUPPORTED_PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const DEFAULT_PROTOCOL = '2024-11-05';
 
@@ -366,6 +367,29 @@ async function toolHealth(args) {
   return { payload: { ...report, text: undefined }, text: formatHealth(report) };
 }
 
+async function toolWatch(args) {
+  const action = String((args && args.action) || 'list');
+  if (!['list', 'add', 'run', 'remove', 'clear'].includes(action)) {
+    throw new Error('action must be list | add | run | remove | clear');
+  }
+  const current = settings();
+  const api = createApi({
+    store,
+    defaults: {
+      limit: current.limit,
+      pages: current.pages,
+      maxPlatforms: current.maxPlatforms,
+      timeoutMs: current.timeoutMs,
+      defaultPlatforms: current.defaultPlatforms,
+      cacheTtlMs: current.cacheTtlMs,
+      chips: [],
+    },
+    cache: getCache(),
+  });
+  const op = action === 'clear' ? 'watch.clear' : 'watch.' + action;
+  return api.perform(op, args || {});
+}
+
 async function toolProviders() {
   const list = providerCatalog();
   const current = settings();
@@ -457,6 +481,25 @@ const TOOLS = [
       additionalProperties: false,
     },
     run: toolResearch,
+  },
+  {
+    name: 'web_scout_watch',
+    description:
+      'Topic watches: remember a query and the URLs already seen, then each run only returns what is new. action=list|add|run|remove|clear.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'add', 'run', 'remove', 'clear'] },
+        query: { type: 'string', description: 'For add: the topic to watch.' },
+        platforms: { type: 'array', items: { type: 'string' }, description: 'For add: platform ids.' },
+        everyMinutes: { type: 'number', description: 'For add: interval in minutes (10-1440, default 60).' },
+        minNew: { type: 'number', description: 'For add: surface only runs with at least this many new items.' },
+        id: { type: 'string', description: 'For run/remove: watch id.' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    run: toolWatch,
   },
   {
     name: 'web_scout_health',

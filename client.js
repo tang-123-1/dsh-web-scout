@@ -35,6 +35,19 @@ window.__ModuleLoader__.load({
         healthRun: '体检',
         healthBusy: '体检中…',
         healthTally: '体检：可用 {ok} · 空 {empty} · 被拦 {blocked} · 需登录 {login} · 出错 {error}',
+  watchSection: '追踪',
+  watchHint: '盯一个话题：每轮只回新出现的链接（按间隔后台自动跑）',
+  watchQuery: '要盯的关键词',
+  watchEvery: '间隔（分钟）',
+  watchAdd: '添加追踪',
+  watchRun: '运行',
+  watchRemove: '删除',
+  watchEmpty: '还没有追踪，填个关键词再点「添加追踪」',
+  watchDue: '待运行',
+  watchNew: '新增 {n} 条',
+  watchFirst: '已建立基线',
+  watchBusy: '运行中…',
+  watchFailed: '追踪失败',
         shellTag: '中转',
         trendNew: '新',
         trendUp: '↑{n}',
@@ -134,6 +147,19 @@ window.__ModuleLoader__.load({
         healthRun: 'Check',
         healthBusy: 'Checking…',
         healthTally: 'Health: ok {ok} · empty {empty} · blocked {blocked} · login {login} · error {error}',
+  watchSection: 'Watches',
+  watchHint: 'Track a topic: each run only returns links it has never seen before.',
+  watchQuery: 'Topic to watch',
+  watchEvery: 'Every (minutes)',
+  watchAdd: 'Add watch',
+  watchRun: 'Run',
+  watchRemove: 'Delete',
+  watchEmpty: 'No watches yet — type a topic and hit Add watch.',
+  watchDue: 'due',
+  watchNew: '{n} new',
+  watchFirst: 'baseline saved',
+  watchBusy: 'Running…',
+  watchFailed: 'watch failed',
         shellTag: 'Redirect',
         trendNew: 'New',
         trendUp: '↑{n}',
@@ -790,6 +816,9 @@ function statusStyle(status) {
       // 否则会出现「刚移除的站点，网格里还是白框高亮」的假象。
       const chipSeq = React.useRef(0);
       const [loginNote, setLoginNote] = React.useState({});
+  const [watches, setWatches] = React.useState([]);
+  const [watchBusy, setWatchBusy] = React.useState('');
+  const [watchForm, setWatchForm] = React.useState({ query: '', everyMinutes: 60 });
       const [pasteFor, setPasteFor] = React.useState('');
       const [pasteValue, setPasteValue] = React.useState('');
       const panelRef = React.useRef(null);
@@ -990,6 +1019,64 @@ function statusStyle(status) {
       };
 
       const noteFor = (id, message) => setLoginNote((current) => ({ ...current, [id]: message }));
+
+  const refreshWatches = async () => {
+    try {
+      const value = await post('watch.list', {});
+      setWatches(Array.isArray(value.watches) ? value.watches : []);
+    } catch (error) {
+      setChatNote(String((error && error.message) || error));
+    }
+  };
+
+  const addWatch = async () => {
+    const query = String(watchForm.query || '').trim();
+    if (query === '') {
+      setChatNote(t('watchEmpty'));
+      return;
+    }
+    setWatchBusy('add');
+    try {
+      await post('watch.add', { query, platforms: selected, everyMinutes: Number(watchForm.everyMinutes) || 60 });
+      setWatchForm({ query: '', everyMinutes: Number(watchForm.everyMinutes) || 60 });
+      await refreshWatches();
+      setChatNote(t('watchSection'));
+    } catch (error) {
+      setChatNote(String((error && error.message) || error));
+    } finally {
+      setWatchBusy('');
+    }
+  };
+
+  const runWatchNow = async (id) => {
+    setWatchBusy(id);
+    try {
+      const value = await post('watch.run', { id });
+      await refreshWatches();
+      setChatNote(value && value.first ? t('watchFirst') : fill(t('watchNew'), { n: (value && value.added) || 0 }));
+    } catch (error) {
+      setChatNote(String((error && error.message) || error));
+    } finally {
+      setWatchBusy('');
+    }
+  };
+
+  const removeWatch = async (id) => {
+    setWatchBusy(id);
+    try {
+      await post('watch.remove', { id });
+      await refreshWatches();
+    } catch (error) {
+      setChatNote(String((error && error.message) || error));
+    } finally {
+      setWatchBusy('');
+    }
+  };
+
+  React.useEffect(() => {
+    refreshWatches();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
       const doLogin = async (platform) => {
         setBusyId(`open:${platform}`);
@@ -1502,8 +1589,81 @@ function statusStyle(status) {
                 h('span', { style: merge(S.caret, open === 'login' ? S.caretOpen : null) }),
                 t('loginSection'),
               ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  style: merge(S.chip, open === 'watch' ? S.chipOn : null),
+                  onClick: (event) => {
+                    toggleSection('watch');
+                    blurOnClick(event);
+                  },
+                },
+                h('span', { style: merge(S.caret, open === 'watch' ? S.caretOpen : null) }),
+                t('watchSection') + (watches.length > 0 ? ' ' + watches.length : ''),
+              ),
             ),
             stale ? h('div', { style: merge(S.hint, { padding: '2px 12px 0', color: C.warn }) }, t('stale')) : null,
+            open === 'watch'
+              ? h(
+                  'div',
+                  { style: merge(S.block, S.blockTight) },
+                  h('div', { style: S.blockTitle }, t('watchHint')),
+                  h(
+                    'div',
+                    { style: merge(S.row, { gap: '6px' }) },
+                    h('input', {
+                      style: merge(S.miniInput, { flex: '1' }),
+                      placeholder: t('watchQuery'),
+                      value: watchForm.query,
+                      onChange: (event) => setWatchForm({ ...watchForm, query: event.target.value }),
+                      onKeyDown: (event) => {
+                        if (event.key === 'Enter' && !event.nativeEvent.isComposing) addWatch();
+                      },
+                    }),
+                    h('input', {
+                      style: merge(S.miniInput, { width: '64px' }),
+                      type: 'number',
+                      min: 10,
+                      max: 1440,
+                      value: watchForm.everyMinutes,
+                      onChange: (event) => setWatchForm({ ...watchForm, everyMinutes: event.target.value }),
+                    }),
+                    h(
+                      'button',
+                      { type: 'button', style: S.miniAction, onClick: addWatch, disabled: watchBusy === 'add' },
+                      watchBusy === 'add' ? t('watchBusy') : t('watchAdd'),
+                    ),
+                  ),
+                  watches.length === 0
+                    ? h('div', { style: S.rowNote }, t('watchEmpty'))
+                    : watches.map((entry) =>
+                        h(
+                          'div',
+                          { key: entry.id, style: merge(S.row, { gap: '6px', alignItems: 'center' }) },
+                          h(
+                            'div',
+                            { style: { flex: '1', minWidth: 0 } },
+                            h('div', { style: merge(S.rowName, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }, entry.query),
+                            h(
+                              'div',
+                              { style: S.rowNote },
+                              (entry.lastRunAt ? entry.lastRunAt.slice(5, 16).replace('T', ' ') : t('watchDue')) +
+                                ' · ' +
+                                (entry.lastNew > 0 ? fill(t('watchNew'), { n: entry.lastNew }) : '') +
+                                (entry.lastError ? ' · ' + t('watchFailed') + ': ' + entry.lastError : ''),
+                            ),
+                          ),
+                          h(
+                            'button',
+                            { type: 'button', style: S.miniAction, onClick: () => runWatchNow(entry.id), disabled: watchBusy === entry.id },
+                            watchBusy === entry.id ? t('watchBusy') : t('watchRun'),
+                          ),
+                          h('button', { type: 'button', style: S.miniAction, onClick: () => removeWatch(entry.id) }, t('watchRemove')),
+                        ),
+                      ),
+                )
+              : null,
             open === 'sites'
               ? h(
                   'div',
