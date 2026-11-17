@@ -776,19 +776,11 @@ curl -s -X POST http://127.0.0.1:3209/web-scout/api \
 
 改 Host 半后：`set_bundle` 关开一次。改 `client.js` 后：刷新页面。日志看 DSH 主进程输出，插件侧的问题会带 `web-scout:` 前缀。
 
-## 发布到 GitHub
+## 仓库与发布
 
-```bash
-cd D:/dshcs/web-scout
-git init
-git add .
-git commit -m "feat: web-scout 1.8.0 — 46 平台联网检索插件"
-git branch -M main
-git remote add origin https://github.com/[GITHUB_OWNER]/web-scout.git
-git push -u origin main
-```
-
-发布前记得替换占位符：`package.json` 的 `author` / `repository` / `homepage` / `bugs`，`LICENSE` 的版权人，本 README 里的 `[GITHUB_OWNER]`。
+- 源码：<https://github.com/tang-123-1/dsh-web-scout>
+- npm：<https://www.npmjs.com/package/dsh-web-scout>
+- 打 tag 即自动发布：`git tag v1.34.0 && git push origin v1.34.0`（`.github/workflows/release.yml`，版本已存在则跳过）
 
 **不要提交**：`~/.dsh/web-scout.json`（含登录 cookie）、`web-scout-browser/`（浏览器 profile）、`_probe/`（调试脚本）。`.gitignore` 已处理。
 

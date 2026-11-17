@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-scout",
-  "version": "1.33.0",
+  "version": "1.33.1",
   "type": "module",
   "description": "给 DeepSeek Harness 的联网检索插件：46 个平台、热搜榜、证据包、MCP 服务。",
   "keywords": [
@@ -18,14 +18,14 @@
     "research"
   ],
   "license": "MIT",
-  "author": "[YOUR_NAME]",
+  "author": "tang-123-1",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/[GITHUB_OWNER]/web-scout.git"
+    "url": "git+https://github.com/tang-123-1/dsh-web-scout.git"
   },
-  "homepage": "https://github.com/[GITHUB_OWNER]/web-scout#readme",
+  "homepage": "https://github.com/tang-123-1/dsh-web-scout#readme",
   "bugs": {
-    "url": "https://github.com/[GITHUB_OWNER]/web-scout/issues"
+    "url": "https://github.com/tang-123-1/dsh-web-scout/issues"
   },
   "engines": {
     "node": ">=22"

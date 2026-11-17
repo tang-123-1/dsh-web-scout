@@ -1,5 +1,11 @@
 # 变更记录
 
+## [1.33.1] - 2026-11-17
+
+### 修复
+- **包元数据仍是占位符**：`package.json` 的 `author` / `repository` / `homepage` / `bugs` 一直没替换，npm 页面上的仓库链接指向 `[GITHUB_OWNER]/web-scout`，`LICENSE` 版权人也是 `[YOUR_NAME]` → 全部改为 `tang-123-1/dsh-web-scout`。
+- `README.md` 的「发布到 GitHub」一节仍是脚手架说明（含 `[GITHUB_OWNER]`），换成真实的仓库/npm 地址与「打 tag 自动发布」的用法。
+
 ## [1.33.0] - 2026-11-17
 
 语言适配与英文文档。
