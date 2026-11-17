@@ -21,6 +21,8 @@ const DEFAULTS = {
   renderPages: 2,
   renderBudgetMs: 16000,
   renderHeadless: false,
+  quotes: true,
+  quotePages: 3,
   defaultPlatforms: ['bing', 'so360', 'csdn', 'juejin', 'toutiao', 'v2ex', 'zhihu', 'bilibili', 'weixin'],
   chips: ['auto', 'bing', 'zhihu', 'bilibili', 'douyin', 'douyinhot', 'csdn', 'juejin'],
   customPlatforms: [],

@@ -2769,6 +2769,140 @@ export function packEvidence(options = {}) {
   };
 }
 
+/**
+ * 证据包 v2（B3）：从正文里挑一句**真的含查询词**的原话。
+ *
+ * 为什么不用摘要模型：证据包的价值是「可核对」——引用必须能在原文里 grep 到。
+ * 所以这里只做机械挑选：切句 → 去噪（导航/版权/cookie 条）→ 按命中数打分 → 取前 N 句。
+ * 挑不到就返回空字符串，宁可没有引文，也不编一句像样的。
+ */
+const QUOTE_DEFAULTS = { maxSentences: 2, chars: 220, minSentence: 24, minSentenceCjk: 12, maxSentence: 480 };
+
+function quoteSentences(text) {
+  const normalized = String(text || '')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t\u00a0]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n');
+  const out = [];
+  for (const block of normalized.split(/\n+/)) {
+    const line = block.trim();
+    if (line === '') continue;
+    const parts = line.split(/(?<=[。！？；!?;])\s*|(?<=[.])\s+(?=[A-Z0-9"'“（(])/u);
+    for (const part of parts) {
+      const sentence = part.trim();
+      if (sentence !== '') out.push(sentence);
+    }
+  }
+  return out;
+}
+
+const QUOTE_NOISE = /^(首页|主页|登录|注册|关于我们|联系我们|隐私政策|用户协议|版权声明|全部|更多|上一页|下一页|cookie|接受|同意|advertisement|sign in|log in|home|menu)$/i;
+
+export function pickQuotes(text, query, options = {}) {
+  const maxSentences = Math.min(4, Math.max(1, Number(options.maxSentences) || QUOTE_DEFAULTS.maxSentences));
+  const maxChars = Math.min(600, Math.max(80, Number(options.chars) || QUOTE_DEFAULTS.chars));
+  const tokens = relevanceTokens(query);
+  // 只用中文 bigram：拉丁字母的 bigram（co/or/rd/is…）会把 gardening 这种句子也算命中。
+  const grams = cjkGrams(query).filter((gram) => /[\u4e00-\u9fff]/.test(gram));
+  const seen = new Set();
+  const scored = [];
+
+  quoteSentences(text).forEach((sentence, index) => {
+    // 中文一句话信息量大，12 字就够引用；英文短语要 24 字符才不至于抽到半句。
+    const minLength = /[\u4e00-\u9fff]/.test(sentence) ? QUOTE_DEFAULTS.minSentenceCjk : QUOTE_DEFAULTS.minSentence;
+    if (sentence.length < minLength) return;
+    if (QUOTE_NOISE.test(sentence)) return;
+    const clipped = sentence.length > QUOTE_DEFAULTS.maxSentence ? sentence.slice(0, QUOTE_DEFAULTS.maxSentence) : sentence;
+    const key = squeeze(clipped);
+    if (key === '' || seen.has(key)) return;
+    const hits = tokenHits(clipped, tokens, grams);
+    if (hits === 0) return;
+    seen.add(key);
+    scored.push({ sentence: clipped, hits, index });
+  });
+
+  if (scored.length === 0) return { quote: '', sentences: [], hits: 0 };
+  scored.sort((left, right) => {
+    if (right.hits !== left.hits) return right.hits - left.hits;
+    return left.index - right.index;
+  });
+
+  const picked = [];
+  let used = 0;
+  for (const entry of scored) {
+    if (picked.length >= maxSentences) break;
+    const cost = entry.sentence.length + (picked.length > 0 ? 4 : 0);
+    if (used + cost > maxChars && picked.length > 0) continue;
+    const sentence = picked.length === 0 && entry.sentence.length > maxChars
+      ? `${entry.sentence.slice(0, Math.max(0, maxChars - 1))}…`
+      : entry.sentence;
+    picked.push(sentence);
+    used += cost;
+  }
+  return { quote: picked.join(' … '), sentences: picked, hits: scored[0].hits };
+}
+
+/**
+ * 给证据包前 N 条抓正文、抽引文。抓不到的条目留空并记原因，绝不阻塞整体。
+ * `fetchPage(url, {maxChars, timeoutMs})` 由调用方注入（通常是 engines.readPage），便于离线测试。
+ */
+export async function enrichQuotes(items, options = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const pages = Math.min(5, Math.max(0, Number(options.pages) || 3));
+  const query = String(options.query || '');
+  const chars = Math.min(40000, Math.max(2000, Number(options.charsPerPage) || 20000));
+  const timeoutMs = Math.min(20000, Math.max(2000, Number(options.timeoutMs) || 8000));
+  const maxSentences = options.maxSentences;
+  const quoteChars = options.chars;
+  const started = Date.now();
+  const stats = { attempted: 0, fetched: 0, withQuote: 0, skipped: 0, tookMs: 0, errors: [] };
+  if (pages === 0 || list.length === 0) return { items: list, stats: { ...stats, tookMs: 0 } };
+  if (typeof options.fetchPage !== 'function') throw new Error('enrichQuotes 需要 fetchPage');
+
+  const targets = [];
+  for (const item of list) {
+    if (targets.length >= pages) break;
+    if (!item || typeof item.url !== 'string' || !/^https?:\/\//i.test(item.url)) {
+      stats.skipped += 1;
+      continue;
+    }
+    if (item.quote) continue; // 已经有引文的（比如渲染抓下来的）不重复抓
+    targets.push(item);
+  }
+  stats.attempted = targets.length;
+
+  const concurrency = Math.min(3, Math.max(1, Number(options.concurrency) || 3));
+  let cursor = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= targets.length) return;
+      const item = targets[index];
+      try {
+        const page = await options.fetchPage(item.url, { maxChars: chars, timeoutMs });
+        const text = String((page && (page.text || page.content)) || '');
+        if (text === '') {
+          stats.errors.push({ url: item.url, reason: '正文为空' });
+          continue;
+        }
+        stats.fetched += 1;
+        const picked = pickQuotes(text, query, { maxSentences, chars: quoteChars });
+        if (picked.quote !== '') {
+          item.quote = picked.quote;
+          item.quoteHits = picked.hits;
+          stats.withQuote += 1;
+        }
+      } catch (error) {
+        stats.errors.push({ url: item.url, reason: summarizeError(error) });
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, targets.length) }, () => worker()));
+  stats.tookMs = Date.now() - started;
+  return { items: list, stats };
+}
+
 /** 证据包的纯文本形态：给模型/输入框用，已按预算压好。 */
 export function formatEvidence(pack, options = {}) {
   const title = String(options.title || '证据包');
@@ -2780,6 +2914,7 @@ export function formatEvidence(pack, options = {}) {
     lines.push(`${index + 1}. ${item.title}`);
     lines.push(`   ${item.platformLabel} · ${KIND_LABELS[item.kind] || item.kind} · ${item.url}`);
     if (item.excerpt) lines.push(`   > ${item.excerpt}`);
+    if (item.quote) lines.push(`   原文：「${item.quote}」`);
     if (item.why) lines.push(`   依据：${item.why}`);
   });
   if (pack.gaps.length > 0) {

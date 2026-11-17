@@ -274,6 +274,24 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | `verify-evidence-live.mjs` | live 证据包预算/缓存/榜单、体检三站真打、未知平台 skipped | 15/15 |
 | `verify-mcp-117.mjs` | MCP 侧五个工具、证据包预算与缓存、体检、缺 query isError | 11/11 |
 
+### 原文引文（v1.27）
+
+证据包原来只给「标题 + 摘要」，摘要常常是站点自己截的，核对起来还得点进去。现在会给前几条补一句**原文里真的有**的话：
+
+- 对排名前 `quotePages`（默认 3）条抓正文，切句后只保留**命中查询词**的句子，挑 1–2 句拼成引文；引用文本能在原文里 grep 到，不是模型转述。
+- 挑不到就留空——宁可这条没有引文，也不编一句像样的。
+- 噪声先剔：导航（首页/登录/注册/关于我们）、cookie 提示、过短的行；同一句重复出现只算一次。
+- 中文一句话 12 字即可入选，英文要 24 字符（避免抽到半句）。
+- 抓正文失败不影响其它条：`quoteStats.errors` 里记 URL 与原因，证据包照常返回。
+- `quotes:false` 完全关掉这一层，回到「只要摘要」的旧行为。
+
+```jsonc
+{"op":"evidence","query":"cordis 插件","quotePages":2}
+// → items[].quote / items[].quoteHits, quoteStats:{attempted,fetched,withQuote,skipped,tookMs,errors}
+```
+
+实测：「cordis 插件」在 bing 上 3 条结果、抓 2 篇正文、1 条拿到引文，718ms；引文与原文逐字一致（忽略标点/空白）。
+
 ### 浏览器渲染抓取（v1.26）
 
 有一批站点只对真浏览器给内容：搜索页是 SPA、接口要签名、或者要过一遍 JS 才出结果。以前它们只会回一条「去站内搜」的入口行，现在会先用插件自管的浏览器真渲染一次：

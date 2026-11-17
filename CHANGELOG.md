@@ -1,5 +1,24 @@
 # 变更记录
 
+## [1.27.0] - 2026-11-17
+
+### 证据包 v2：原文引文（B3）
+
+- `engines.js` 新增 `pickQuotes(text, query)`：切句 → 剔导航/cookie 噪声 → 只保留命中查询词的句子 → 按命中数取 1–2 句，单句超长截断加省略号。纯函数，可离线测。
+- 新增 `enrichQuotes(items, {fetchPage, query, pages, ...})`：并发 3 抓前 `pages` 条正文，逐条填 `quote`/`quoteHits`；单条失败只记 `stats.errors`，不影响其它条与证据包本身。
+- `api.js` 的 `evidence` 在打包后自动补引文（`quotes:false` 关闭），`quoteStats` 随结果返回；`formatEvidence()` 多一行「原文：「…」」。
+- `store.js` 默认配置加 `quotes: true`、`quotePages: 3`。
+
+### 修复（自测抓出来的）
+
+- 拉丁字母也被拿去做 bigram（`co/or/rd/di/is`…），于是 `gardening` 这种无关句子也算「命中」→ 只保留含汉字的 bigram。
+- 最短句长统一按 24 字符算，中文 12 字的完整句子会被整段丢掉（实测 4 个用例全空）→ 中文 12 字、英文 24 字符。
+
+### 验证
+
+- `node --test`：**28/28**（新增 `test/quotes.test.mjs` 9 项：英文命中、中文 bigram、无命中返回空、噪声剔除、长度上限与省略号、重复句去重、只抓前 N 条且单条失败不影响其它条、非 http 与已有引文跳过、`formatEvidence` 带引文）。
+- `_probe/verify-quotes.mjs`（真实网络）：**5/5** —— 证据包给出引文（3 条结果 / 抓 2 篇 / 1 条有引文 / 718ms）、文本带「原文：」段、引文与原文逐字一致（忽略标点空白）、同段文本重复挑句结果稳定、`quotes:false` 不抓正文。
+
 ## [1.26.0] - 2026-11-17
 
 ### 浏览器渲染抓取（B1）

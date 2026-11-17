@@ -1,6 +1,8 @@
 import {
   runSearch,
   readPage,
+  pickQuotes,
+  enrichQuotes,
   platformCatalog,
   inferPlatforms,
   cleanQuery,
@@ -561,8 +563,27 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           platforms: result.platforms,
           ...packOptions,
         });
+        // v1.27 / B3：给前几条补「原文引文」。挑不到就留空，不编。
+        let quoteStats = null;
+        if (payload.quotes !== false && settings.quotes !== false && packed.items.length > 0) {
+          try {
+            const enriched = await enrichQuotes(packed.items, {
+              query: result.query,
+              pages: Math.min(5, Math.max(0, Number(payload.quotePages ?? settings.quotePages ?? 3))),
+              charsPerPage: Math.min(40000, Math.max(2000, Number(payload.quoteCharsPerPage) || 20000)),
+              timeoutMs: Math.min(20000, Math.max(2000, Number(payload.quoteTimeoutMs) || settings.timeoutMs || 8000)),
+              fetchPage: (url, opts) => readPage({ url, proxy, maxChars: opts.maxChars, timeoutMs: opts.timeoutMs }),
+            });
+            quoteStats = enriched.stats;
+            const added = packed.items.reduce((sum, item) => sum + (item.quote ? item.quote.length + 8 : 0), 0);
+            packed.usedChars = Math.min(packed.budgetChars, packed.usedChars + added);
+          } catch (error) {
+            quoteStats = { attempted: 0, fetched: 0, withQuote: 0, skipped: 0, tookMs: 0, errors: [{ url: '', reason: String((error && error.message) || error).slice(0, 120) }] };
+          }
+        }
         const data = {
           ...packed,
+          quoteStats,
           text: formatEvidence(packed),
           tunnelSuggested: result.tunnelSuggested,
           mode: result.mode,
