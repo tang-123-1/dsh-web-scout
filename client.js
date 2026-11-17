@@ -37,6 +37,9 @@ window.__ModuleLoader__.load({
         healthTally: '体检：可用 {ok} · 空 {empty} · 被拦 {blocked} · 需登录 {login} · 出错 {error}',
     healthRate: '成功率 {rate}% · 平均 {ms}ms · 最近 {n} 次',
   rerankLabel: '重排',
+  langLabel: '语言',
+  langAuto: '自动',
+  langZh: '中文',
   rerankOff: '关闭',
   rerankLexical: '词频',
   breakerLabel: '熔断',
@@ -168,6 +171,9 @@ window.__ModuleLoader__.load({
         healthTally: 'Health: ok {ok} · empty {empty} · blocked {blocked} · login {login} · error {error}',
     healthRate: '{rate}% ok · avg {ms}ms · last {n}',
   rerankLabel: 'Rerank',
+  langLabel: 'Lang',
+  langAuto: 'Auto',
+  langZh: 'Chinese',
   rerankOff: 'Off',
   rerankLexical: 'Lexical',
   breakerLabel: 'Breaker',
@@ -890,7 +896,7 @@ function statusStyle(status) {
       const [catalog, setCatalog] = React.useState([]);
       const [proxy, setProxy] = React.useState('');
       const [proxyNote, setProxyNote] = React.useState('');
-      const [tuning, setTuning] = React.useState({ rerank: 'lexical', breaker: true });
+      const [tuning, setTuning] = React.useState({ rerank: 'lexical', breaker: true, lang: 'auto' });
       const [hover, setHover] = React.useState('');
       const [chips, setChips] = React.useState(DEFAULT_CHIPS);
       const [stale, setStale] = React.useState(false);
@@ -1037,6 +1043,7 @@ function statusStyle(status) {
             setTuning({
               rerank: value.rerank === 'off' ? 'off' : 'lexical',
               breaker: value.breaker !== false,
+              lang: value.lang === 'zh' || value.lang === 'en' ? value.lang : 'auto',
             });
             if (typeof value.proxy === 'string') setProxy(value.proxy);
           })
@@ -1586,6 +1593,7 @@ function statusStyle(status) {
           setTuning({
             rerank: (value && value.rerank) || 'lexical',
             breaker: !(value && value.breaker === false),
+            lang: (value && value.lang) || 'auto',
           });
         } catch (failure) {
           setError(String((failure && failure.message) || failure));
@@ -2449,6 +2457,16 @@ function statusStyle(status) {
                   onChange: (event) => saveTuning({ rerank: event.target.value }),
                 },
                 ['lexical', 'off'].map((mode) => h('option', { key: mode, value: mode }, mode === 'off' ? t('rerankOff') : t('rerankLexical'))),
+              ),
+              h('span', { style: S.hint }, t('langLabel')),
+              h(
+                'select',
+                {
+                  value: tuning.lang || 'auto',
+                  style: S.footInput,
+                  onChange: (event) => saveTuning({ lang: event.target.value }),
+                },
+                ['auto', 'zh', 'en'].map((mode) => h('option', { key: mode, value: mode }, mode === 'auto' ? t('langAuto') : mode === 'zh' ? t('langZh') : 'English')),
               ),
               h(
                 'label',

@@ -6,6 +6,7 @@ import { absolutize, createClient, decodeEntities, hostOf, htmlToText, stripTags
 import { providers } from './providers/registry.js';
 import { discoverPackageProviders, externalProviderDir, loadExternalProviders } from './providers/external.js';
 import { renderAvailable, renderHtml } from './render.js';
+import { bingLang, bingMarket } from './i18n.js';
 
 const enc = (value) => encodeURIComponent(value);
 const UA_MOBILE =
@@ -897,10 +898,10 @@ export function parseBing(html, base = 'https://www.bing.com') {
 const backends = {};
 
 backends.bing = async (ctx) => {
-  const { client, query, limit, timeoutMs } = ctx;
+  const { client, query, limit, timeoutMs, lang } = ctx;
   const res = await client.request(
-    `https://www.bing.com/search?q=${enc(query)}&count=${Math.min(30, limit * 2)}&setlang=zh-Hans`,
-    { headers: { 'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8' }, timeoutMs },
+    `https://www.bing.com/search?q=${enc(query)}&count=${Math.min(30, limit * 2)}&setlang=${bingLang(lang)}&mkt=${bingMarket(lang)}`,
+    { timeoutMs },
   );
   if (/<title>\s*(?:Just a moment|Attention Required)/i.test(res.text)) {
     throw new EngineBlocked('bing challenge page', { browser: `https://www.bing.com/search?q=${enc(query)}` });
@@ -2247,7 +2248,7 @@ export async function runSearch(options) {
   const pages = Math.min(4, Math.max(1, Number(options.pages) || 2));
   const fetchLimit = Math.min(60, limit * pages * 2);
   const timeoutMs = Math.min(30000, Math.max(3000, Number(options.timeoutMs) || 12000));
-  const client = createClient({ proxy: options.proxy, cookies: options.cookies, timeoutMs });
+  const client = createClient({ proxy: options.proxy, cookies: options.cookies, timeoutMs, language: options.language });
   const perPlatform = [];
   const errors = [];
   // 渲染预算（v1.26 / B1）：一次搜索最多渲染 renderPages 个 entryOnly 平台，总耗时封顶 renderBudgetMs。

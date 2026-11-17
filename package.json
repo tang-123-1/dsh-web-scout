@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-scout",
-  "version": "1.32.0",
+  "version": "1.33.0",
   "type": "module",
   "description": "给 DeepSeek Harness 的联网检索插件：46 个平台、热搜榜、证据包、MCP 服务。",
   "keywords": [
@@ -73,7 +73,10 @@
     "mcp/server.mjs",
     "scripts/selftest.mjs",
     "scripts/new-provider.mjs",
-    "docs/providers.md"
+    "docs/providers.md",
+    "i18n.js",
+    "README.en.md",
+    "docs/providers.en.md"
   ],
   "dsh": {
     "bundle": {

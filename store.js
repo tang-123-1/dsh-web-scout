@@ -21,6 +21,7 @@ const DEFAULTS = {
   renderPages: 2,
   renderBudgetMs: 16000,
   renderHeadless: false,
+  lang: 'auto',
   quotes: true,
   quotePages: 3,
   // v1.30：合并多平台后的重排；'off' 保持引擎原序，'lexical' 按词命中，其余值是外部重排器 id。
@@ -226,6 +227,7 @@ function normalize(raw) {
   if (Number.isFinite(breakerThreshold)) out.breakerThreshold = Math.min(10, Math.max(1, Math.round(breakerThreshold)));
   const breakerCooldown = Number(value.breakerCooldownMs);
   if (Number.isFinite(breakerCooldown)) out.breakerCooldownMs = Math.min(24 * 60 * 60 * 1000, Math.max(60000, Math.round(breakerCooldown)));
+  out.lang = ['auto', 'zh', 'en'].includes(value.lang) ? value.lang : 'auto';
     return out;
 }
 

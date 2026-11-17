@@ -1,5 +1,29 @@
 # 变更记录
 
+## [1.33.0] - 2026-11-17
+
+语言适配与英文文档。
+
+### 新增
+- `i18n.js`：`detectLang()`（汉字数 vs 英文词数）、`resolveLang()`（payload → settings → 推断 → zh）、`acceptLanguage()`、`bingLang()`、`so360Lang()`、`langAffinity()`。
+- `net.js` 的 `createClient({ language })`：默认 `Accept-Language` 可配置，请求级仍可用 `init.language` 覆盖。
+- `engines.js`：`runSearch` 透传 `language`；必应后端按 `lang` 选 `setlang` 与 `mkt`。
+- `api.js`：search 计算语言并回传 `data.lang`，新增 op `lang.detect`；`store.js` 新增 `lang`（`auto|zh|en`）。
+- 面板底部新增「语言」下拉（自动 / 中文 / English），写 `config.lang`。
+- `README.en.md`、`docs/providers.en.md`：英文说明与 provider 契约；README 顶部互链。
+
+### 修复（本轮自测抓出）
+- **缓存跨语言串味**：`searchCacheKey` 不含语言，同一个词先用中文搜、再指定英文会直接返回中文缓存，且命中路径不写 `data.lang` → 缓存键加入 `lang`，命中路径补 `data.lang`。
+- `detectLang` 初版按「汉字占非空白字符比例 ≥15%」，`cordis 插件 1234` 这类混排会误判为英文 → 改成「汉字数 ≥ 英文词数」（`Cordis 插件`、`react hooks 用法` 判中文，`how to write a cordis plugin 插` 判英文）。
+- 探针里用含随机字母后缀的查询词做语言断言，后缀字母会被算成英文词导致偶发误判 → 唯一后缀改用纯数字。
+
+- 实测发现只加 `setlang` 并不换结果市场（同一查询中英两次结果几乎相同）→ 必应再补 `&mkt=zh-CN|en-US`，英文查询才会落到英文市场。
+
+### 自测
+- `test/lang.test.mjs` 7 项；`_probe/verify-lang.mjs` **15/15**（真实本地 HTTP 服务验证请求头随语言变化；离线检索实现验证 `lang` 透传、`data.lang`、settings/payload 覆盖、缓存按语言分开、非法值被 normalize）。
+- `_probe/verify-client-lang.mjs` **5/5**（下拉三项、切换写 `config.lang`、挂载回填）。
+- 全量 `node --test` **72/72**。
+
 ## [1.32.0] - 2026-11-17
 
 Provider 生态：npm 包发现 + 脚手架 + 文档。

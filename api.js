@@ -26,6 +26,7 @@ import {
 } from './engines.js';
 import { openInBrowser } from './open.js';
 import { renderHtml, renderStatus } from './render.js';
+import { acceptLanguage, detectLang, LANG_MODES, resolveLang } from './i18n.js';
 import { mergeCookies } from './browserCookies.js';
 import { checkLogin, loginTarget, cookieMapFromPaste, cookiesForDomain } from './login.js';
 import { ensureBrowserSession, captureBrowserCookies, browserStatus, closeBrowserSession } from './browserAuth.js';
@@ -118,8 +119,8 @@ function cacheKeyFor(settings, parts) {
   return [SEARCH_CACHE_VERSION, settings.proxy ? 'proxy' : 'direct', parts.join('|')].join('::');
 }
 
-function searchCacheKey(settings, query, platforms, limit, pages) {
-  return cacheKeyFor(settings, ['search', query.trim().toLowerCase(), platforms.join(','), String(limit), String(pages)]);
+function searchCacheKey(settings, query, platforms, limit, pages, lang) {
+  return cacheKeyFor(settings, ['search', lang || '', query.trim().toLowerCase(), platforms.join(','), String(limit), String(pages)]);
 }
 
 function evidenceCacheKey(settings, query, platforms, pack) {
@@ -555,12 +556,14 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         const limit = Math.min(30, Math.max(1, Number(payload.limit) || settings.limit));
         const pages = Math.min(4, Math.max(1, Number(payload.pages) || Number(settings.pages) || 3));
         const timeoutMs = Math.min(30000, Math.max(3000, Number(payload.timeoutMs) || settings.timeoutMs));
-        const key = searchCacheKey(settings, query, platforms, limit, pages);
+        const lang = resolveLang(settings, query, payload.lang);
+        const key = searchCacheKey(settings, query, platforms, limit, pages, lang);
         const cached = payload.refresh === true ? undefined : cache.get(key);
         if (cached !== undefined) {
           const hot = decorateHot(cached.value);
           const data = summarize(hot.result);
           data.trend = hot.intel;
+          data.lang = lang;
           data.cached = true;
           data.cacheAgeMs = cached.ageMs;
           data.cacheSource = cached.source;
@@ -586,6 +589,8 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           renderPages: settings.renderPages,
           renderBudgetMs: settings.renderBudgetMs,
           renderHeadless: settings.renderHeadless === true,
+          lang,
+          language: acceptLanguage(lang),
         });
         cache.set(key, result, ttlFrom(settings));
         const hot = decorateHot(result);
@@ -593,6 +598,7 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         data.trend = hot.intel;
         data.cached = false;
         if (payload.remember !== false) data.recent = await rememberQuery(query, platforms);
+        data.lang = lang;
         await rerankData(data, query, settings);
         if (payload.breaker !== false) annotateSkipped(data, breaker.skipped, breaker.trips);
         if (payload.open === true) {
@@ -955,6 +961,11 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         if (!providerBridge || typeof providerBridge.reload !== 'function') throw new Error('provider 层没有启用');
         const report = await providerBridge.reload();
         return { ...report, providers: providerBridge.list(), platforms: providerBridge.platformCount() };
+      }
+      case 'lang.detect': {
+        const text = String(payload.query || '');
+        const lang = resolveLang(settings, text, payload.lang);
+        return { query: text, detected: detectLang(text), lang, language: acceptLanguage(lang) };
       }
       case 'cache.stats': {
         return cache.stats();

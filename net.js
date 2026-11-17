@@ -196,13 +196,14 @@ export function createClient(options = {}) {
   const jar = new CookieJar(options.cookies);
   const proxy = normalizeProxy(options.proxy);
   const defaultTimeout = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 15000;
+  const defaultLanguage = typeof options.language === "string" && options.language !== "" ? options.language : "zh-CN,zh;q=0.9,en;q=0.8";
 
   async function once(target, init) {
     const url = new URL(target);
     const isHttps = url.protocol === 'https:';
     const headers = {
       'user-agent': init.userAgent || DEFAULT_UA,
-      'accept-language': init.language || 'zh-CN,zh;q=0.9,en;q=0.8',
+      'accept-language': init.language || defaultLanguage,
       accept: init.accept || ACCEPT_HTML,
       'accept-encoding': 'gzip, deflate, br',
       ...(init.headers || {}),
