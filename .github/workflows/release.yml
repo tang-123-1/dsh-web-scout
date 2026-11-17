@@ -68,16 +68,41 @@ jobs:
 
             装完执行一次 `set_bundle target=dsh-web-scout enabled=false` → `enabled=true`，刷新页面即可。
 
-      - name: 发布到 npm（版本已存在则跳过）
+      - name: 发布到 npm（已存在则跳过；发布报错但版本在 registry 上也算通过）
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          set -e
           VERSION="$(node -p "require('./package.json').version")"
           NAME="$(node -p "require('./package.json').name")"
-          if npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+          has_version() { npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; }
+
+          if has_version; then
             echo "npm already has ${NAME}@${VERSION}, skip publish"
             exit 0
           fi
+
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::warning::仓库没配 NPM_TOKEN，跳过自动发布；安装仍可用 plugin_manager install_bundle 或手动 npm publish"
+            exit 0
+          fi
+
+          set +e
           npm publish --provenance --access public
+          CODE=$?
+          set -e
+          echo "npm publish exited with ${CODE}"
+
+          if [ "${CODE}" -ne 0 ]; then
+            # registry 有写入延迟，也可能是并发发布已成功（E409），复查后再判失败
+            for i in 1 2 3 4 5; do
+              sleep 6
+              if has_version; then
+                echo "${NAME}@${VERSION} 已在 registry 上，视为发布成功"
+                exit 0
+              fi
+            done
+            echo "::error::npm 发布失败，且 ${NAME}@${VERSION} 不在 registry"
+            exit 1
+          fi
+
           echo "published ${NAME}@${VERSION}"
