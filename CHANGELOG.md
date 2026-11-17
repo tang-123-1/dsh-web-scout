@@ -1,5 +1,24 @@
 # 变更记录
 
+## [1.30.0] - 2026-11-17
+
+结果质量与可用性：可插拔重排 + 平台熔断。
+
+### 新增
+- **重排**（`rerank`，默认 `lexical`）：按查询词在标题/摘要/地址的命中重排，`off` 保持原序；支持外部重排器（`<profile>/web-scout-rerankers/*.mjs`，导出 `{ id, rank(items, ctx) }`，最多 20 个/128KB），外部出错自动退回词频重排并记 `errors`。每次检索回 `data.rerank = {mode, used, moved, errors}`。
+- ops：`rerank.list` / `rerank.reload` / `rerank.check`；面板底部新增「重排」下拉（词频 / 关闭）。
+- **平台熔断**（`breaker`，默认开，阈值 3，冷却 30 分钟）：连续 `error`/`timeout`/`blocked` 的平台暂时跳过，`empty`/`login` 不计入；冷却后 half-open 自动再试，成功即恢复。被跳过的平台以 `status:'skipped'`、`backend:'breaker'` 出现在结果里并写明剩余时间。
+- ops：`health.breaker`（enabled/threshold/cooldownMinutes/tripped）、`health.resume`（单平台或全部）；请求可传 `breaker:false` 强制再试；全平台冷却时报出可操作错误。面板底部新增「熔断」勾选框。
+
+### 修复（本轮自测抓出）
+- `createApi({ search })` 注入只被 watch 路径使用，`search` op 直接调用 `runSearch` —— 离线探针因此真的联网。改为 `searchFn = typeof searchImpl === 'function' ? searchImpl : runSearch`。
+- `breaker:false` 强制再试时，被熔断的平台仍被标成 `skipped` 混进结果。改为仅在未强制时才补跳过行。
+- 探针自身两处误报：断言拿 `id` 而结果行只有 `url`；连续用例复用同一查询词命中 SQLite 缓存导致「搜索没被调用」的假失败 —— 改为每次运行带随机后缀。
+
+### 自测
+- `test/rerank.test.mjs` 11 项、`test/breaker.test.mjs` 8 项；全量 `node --test` **57/57**。
+- 离线探针：`_probe/verify-rerank.mjs` 7/7、`_probe/verify-breaker.mjs` 8/8、`_probe/verify-client-tuning.mjs` 6/6。
+
 ## [1.29.0] - 2026-11-17
 
 ### 结果操作与导出（B5）

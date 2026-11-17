@@ -23,6 +23,12 @@ const DEFAULTS = {
   renderHeadless: false,
   quotes: true,
   quotePages: 3,
+  // v1.30：合并多平台后的重排；'off' 保持引擎原序，'lexical' 按词命中，其余值是外部重排器 id。
+  rerank: 'lexical',
+  // v1.31：连续失败达到阈值的平台先跳过（冷却期过了一半开允许再试一次）。
+  breaker: true,
+  breakerThreshold: 3,
+  breakerCooldownMs: 30 * 60 * 1000,
   defaultPlatforms: ['bing', 'so360', 'csdn', 'juejin', 'toutiao', 'v2ex', 'zhihu', 'bilibili', 'weixin'],
   chips: ['auto', 'bing', 'zhihu', 'bilibili', 'douyin', 'douyinhot', 'csdn', 'juejin'],
   customPlatforms: [],
@@ -214,6 +220,12 @@ function normalize(raw) {
   out.watches = normalizeWatches(value.watches);
   out.recent = normalizeRecent(value.recent);
   out.health = normalizeHealth(value.health);
+  if (typeof value.rerank === 'string' && value.rerank.trim() !== '') out.rerank = value.rerank.trim().slice(0, 40);
+  if (typeof value.breaker === 'boolean') out.breaker = value.breaker;
+  const breakerThreshold = Number(value.breakerThreshold);
+  if (Number.isFinite(breakerThreshold)) out.breakerThreshold = Math.min(10, Math.max(1, Math.round(breakerThreshold)));
+  const breakerCooldown = Number(value.breakerCooldownMs);
+  if (Number.isFinite(breakerCooldown)) out.breakerCooldownMs = Math.min(24 * 60 * 60 * 1000, Math.max(60000, Math.round(breakerCooldown)));
     return out;
 }
 

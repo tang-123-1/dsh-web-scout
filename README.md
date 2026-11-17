@@ -32,6 +32,7 @@
 - **证据包 / 研究模式**：打分取前 N 条 + 摘录 + 覆盖与缺口；多轮检索带时间预算与质量门槛。
 - **可插拔**：外部 provider 丢进 `<profile>/web-scout-providers/` 即生效，热加载。
 - **导出与历史**：结果按相关度/平台排序，一键复制 Markdown / CSV；最近 20 条查询可点回重跑；Alt+W 随时开面板。
+- **重排与熔断**：查询词重排（可插外部重排器），连续失败的平台自动跳过、冷却后自动恢复。
 - **话题追踪**：盯一个查询词，后台按间隔重跑，每轮只回「没见过」的新链接（v1.25）。
 - **浏览器渲染**：SPA / 要签名的站点用插件自管浏览器真渲染一次再抽结果，失败退回入口行（v1.26）。
 
@@ -274,6 +275,23 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | `verify-evidence.mjs` | 去重、打分排序、每平台配额、预算、摘录命中、缺口、榜单空 query、新鲜度、体检跳过规则 | 19/19 |
 | `verify-evidence-live.mjs` | live 证据包预算/缓存/榜单、体检三站真打、未知平台 skipped | 15/15 |
 | `verify-mcp-117.mjs` | MCP 侧五个工具、证据包预算与缓存、体检、缺 query isError | 11/11 |
+
+### 重排与熔断（v1.30）
+
+两件事都在同一个地方控制：面板底部那行「重排 / 熔断」，也可以直接改设置（`config` 的 `rerank` / `breaker`）。
+
+**重排**（`rerank`，默认 `lexical`）
+- `off`：保持各平台原始顺序。
+- `lexical`：按查询词在标题、摘要、地址里的命中程度重排，命中越靠前、越集中越靠前；原分数只作小幅加权，不会让「分数高但不相关」的结果压住真正相关的。
+- 外部重排器：把 `*.mjs` 放进 `<profile>/web-scout-rerankers/`（`rerank.list` 会打印实际目录），文件导出 `{ id, rank(items, ctx) }` 即可；`rank` 抛错或返回长度不一致时自动退回 `lexical`，错误写进 `data.rerank.errors`，不会让整次检索失败。最多加载 20 个、单文件 128KB。
+- 每次检索都会带 `data.rerank = { mode, used, moved, errors }`，`moved` 是被挪动过位置的条数。
+
+**熔断**（`breaker`，默认开）
+- 某平台最近 3 次（`breakerThreshold`）体检/检索都是 `error` / `timeout` / `blocked`，就先跳过它；`empty`（真没结果）和 `login`（需要登录）不算坏，不会误伤。
+- 冷却 30 分钟（`breakerCooldownMs`）后自动放行一次再试，成功即恢复。
+- 被跳过的平台仍会出现在结果的 `platforms` 里，`status: 'skipped'`、`backend: 'breaker'`，`note` 写明还剩几分钟；不知道原因时看 `health.breaker`（列出 `fails` / `retryInMs` / `reason`）。
+- 想立刻重试：`health.resume`（单平台或全部清空），或在这次请求里传 `breaker: false` 强制打一遍。
+- 全平台都在冷却时不会静默返回空，而是直接报错并说明怎么解。
 
 ### 结果操作与导出（v1.29）
 

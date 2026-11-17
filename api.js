@@ -30,6 +30,9 @@ import { mergeCookies } from './browserCookies.js';
 import { checkLogin, loginTarget, cookieMapFromPaste, cookiesForDomain } from './login.js';
 import { ensureBrowserSession, captureBrowserCookies, browserStatus, closeBrowserSession } from './browserAuth.js';
 import { createCache } from './cache.js';
+import { applyRerank, loadRerankers, rerankDir, RERANK_MODES } from './rerank.js';
+import { trippedPlatforms, breakerState } from './breaker.js';
+import { scoutConfigDir } from './store.js';
 
 const MAX_BODY = 256 * 1024;
 
@@ -447,6 +450,67 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
     return { ran: runs.length, runs };
   }
 
+  // 外部重排器：首次用到时才读目录，之后缓存；`rerank.reload` 强制重读。
+  let rerankers = { rankers: {}, report: null };
+
+  async function ensureRerankers(force) {
+    if (force || rerankers.report === null) {
+      try {
+        const report = await loadRerankers({ dir: rerankDir(scoutConfigDir()) });
+        rerankers = { rankers: report.rankers || {}, report };
+      } catch (error) {
+        rerankers = { rankers: {}, report: { dir: rerankDir(scoutConfigDir()), loaded: [], errors: [{ file: '', message: error.message }], skipped: true, rankers: {} } };
+      }
+    }
+    return rerankers;
+  }
+
+  async function rerankData(data, query, settings) {
+    const mode = settings.rerank === undefined || settings.rerank === null ? 'lexical' : String(settings.rerank);
+    if (mode === 'off' || !Array.isArray(data.results) || data.results.length < 2) return data;
+    const external = mode === 'lexical' ? null : (await ensureRerankers(false)).rankers;
+    const outcome = await applyRerank(data.results, { query, mode, external });
+    data.results = outcome.items;
+    data.rerank = { mode: outcome.mode, used: outcome.used, moved: outcome.moved, errors: outcome.errors };
+    return data;
+  }
+
+  // 熔断：按体检历史把「连着失败」的平台先摘掉，摘掉的也写成一条 platform 让面板显示原因。
+  function splitByBreaker(platforms, settings) {
+    if (settings.breaker === false) return { allowed: platforms, skipped: [], trips: {} };
+    const trips = trippedPlatforms(store.get('health'), {
+      threshold: settings.breakerThreshold,
+      cooldownMs: settings.breakerCooldownMs,
+    });
+    const allowed = [];
+    const skipped = [];
+    for (const id of platforms) {
+      if (trips[id]) skipped.push(id);
+      else allowed.push(id);
+    }
+    return { allowed, skipped, trips };
+  }
+
+  function annotateSkipped(data, skipped, trips) {
+    if (!Array.isArray(data.platforms) || skipped.length === 0) return data;
+    for (const id of skipped) {
+      const def = PLATFORMS.get(id);
+      const trip = trips[id] || {};
+      data.platforms.push({
+        id,
+        label: (def && (def.zh || def.label)) || id,
+        status: 'skipped',
+        note: `熔断中：${trip.reason || '连续失败'}，${Math.max(1, Math.round((Number(trip.retryInMs) || 0) / 60000))} 分钟后自动再试（体检成功即恢复）`,
+        count: 0,
+        browser: def && def.browser ? def.browser('') : '',
+        backend: 'breaker',
+        kind: 'web',
+        login: false,
+      });
+    }
+    return data;
+  }
+
   async function perform(op, payload) {
     const settings = store.snapshot();
     const proxy = settings.proxy || undefined;
@@ -468,11 +532,17 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         const context = typeof payload.context === 'string' ? payload.context : '';
         const hinted = inferPlatforms(`${payload.query || ''} ${context} ${messages.slice(-6).map(messageText).join(' ').slice(-600)}`);
         // 「自动」= 默认平台 + 从这句话/上下文里识别出的站点；只用默认两个引擎时结果会显得很少。
-        const platforms = resolvePlatforms(
+        const requested = resolvePlatforms(
           payload.platforms && payload.platforms.length > 0 ? payload.platforms : ['auto'],
           settings.defaultPlatforms,
           hinted,
         ).slice(0, settings.maxPlatforms);
+        const breaker = splitByBreaker(requested, settings);
+        const forced = payload.breaker === false;
+        const platforms = forced ? requested : breaker.allowed;
+        if (platforms.length === 0 && requested.length > 0) {
+          throw new Error('这些平台都在熔断冷却中：' + requested.join(' / ') + '（health.resume 可重置，或传 breaker:false 强制再试）');
+        }
         // 纯信息流（抖音热榜 / 知乎推荐 / 知乎关注）与关键词无关，别把对话内容硬塞成查询词。
         const feedOnly = platforms.length > 0 && platforms.every((id) => {
           const def = PLATFORMS.get(id);
@@ -495,13 +565,16 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           data.cacheAgeMs = cached.ageMs;
           data.cacheSource = cached.source;
           if (payload.remember !== false) data.recent = await rememberQuery(query, platforms);
+          await rerankData(data, query, settings);
+          if (payload.breaker !== false) annotateSkipped(data, breaker.skipped, breaker.trips);
           if (payload.open === true) {
             const first = data.results.find((item) => /^https?:\/\//i.test(item.url));
             if (first) data.opened = openInBrowser(first.url);
           }
           return data;
         }
-        const result = await runSearch({
+        const searchFn = typeof searchImpl === 'function' ? searchImpl : runSearch;
+        const result = await searchFn({
           query,
           platforms,
           limit,
@@ -520,6 +593,8 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         data.trend = hot.intel;
         data.cached = false;
         if (payload.remember !== false) data.recent = await rememberQuery(query, platforms);
+        await rerankData(data, query, settings);
+        if (payload.breaker !== false) annotateSkipped(data, breaker.skipped, breaker.trips);
         if (payload.open === true) {
           const first = data.results.find((item) => /^https?:\/\//i.test(item.url));
           if (first) data.opened = openInBrowser(first.url);
@@ -789,6 +864,34 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
         await store.flush();
         return { removed: id === '' ? 'all' : id, left: Object.keys(next).length };
       }
+      case 'rerank.list': {
+        const loaded = await ensureRerankers(false);
+        return {
+          modes: RERANK_MODES,
+          active: String(settings.rerank || 'lexical'),
+          dir: loaded.report ? loaded.report.dir : rerankDir(scoutConfigDir()),
+          external: loaded.report ? loaded.report.loaded || [] : [],
+          errors: loaded.report ? loaded.report.errors || [] : [],
+          skipped: loaded.report ? loaded.report.skipped === true : true,
+        };
+      }
+      case 'rerank.reload': {
+        const loaded = await ensureRerankers(true);
+        return {
+          dir: loaded.report.dir,
+          external: loaded.report.loaded || [],
+          errors: loaded.report.errors || [],
+          skipped: loaded.report.skipped === true,
+        };
+      }
+      case 'rerank.check': {
+        const items = Array.isArray(payload.items) ? payload.items.slice(0, 50) : [];
+        if (items.length === 0) throw new Error('缺少 items');
+        const mode = String(payload.mode || settings.rerank || 'lexical');
+        const external = mode === 'lexical' || mode === 'off' ? null : (await ensureRerankers(false)).rankers;
+        const outcome = await applyRerank(items, { query: String(payload.query || ''), mode, external });
+        return { mode: outcome.mode, used: outcome.used, moved: outcome.moved, errors: outcome.errors, rows: outcome.items.map((item) => ({ title: item.title, url: item.url, gain: item.rerankGain })) };
+      }
       case 'recent.list': {
         return { recent: recentList(settings), ttlDays: 7, limit: RECENT_LIMIT };
       }
@@ -800,6 +903,36 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           /* 清空失败也不该抛 */
         }
         return { recent: [] };
+      }
+      case 'health.breaker': {
+        const trips = settings.breaker === false ? {} : trippedPlatforms(store.get('health'), {
+          threshold: settings.breakerThreshold,
+          cooldownMs: settings.breakerCooldownMs,
+        });
+        return {
+          enabled: settings.breaker !== false,
+          threshold: settings.breakerThreshold,
+          cooldownMinutes: Math.round((Number(settings.breakerCooldownMs) || 0) / 60000),
+          tripped: Object.entries(trips).map(([id, state]) => ({
+            id,
+            label: (PLATFORMS.get(id) && (PLATFORMS.get(id).zh || PLATFORMS.get(id).label)) || id,
+            fails: state.fails,
+            retryInMs: state.retryInMs || 0,
+            reason: state.reason,
+          })),
+        };
+      }
+      case 'health.resume': {
+        const id = String(payload.platform || '');
+        const health = { ...(store.get('health') || {}) };
+        if (id === '') {
+          for (const key of Object.keys(health)) delete health[key];
+        } else {
+          delete health[id];
+        }
+        store.patch({ health });
+        await store.flush();
+        return { resumed: id === '' ? 'all' : id, left: Object.keys(health).length };
       }
       case 'config': {
         return redactSettings(store.patch(payload.patch || {}));

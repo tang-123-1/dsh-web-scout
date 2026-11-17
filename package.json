@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-scout",
-  "version": "1.29.0",
+  "version": "1.30.0",
   "type": "module",
   "description": "给 DeepSeek Harness 的联网检索插件：46 个平台、热搜榜、证据包、MCP 服务。",
   "keywords": [
@@ -56,6 +56,8 @@
     "cache.js",
     "client.js",
     "render.js",
+    "rerank.js",
+    "breaker.js",
     "locale/zh.json",
     "locale/en.json",
     "icon.svg",

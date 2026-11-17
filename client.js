@@ -36,6 +36,11 @@ window.__ModuleLoader__.load({
         healthBusy: '体检中…',
         healthTally: '体检：可用 {ok} · 空 {empty} · 被拦 {blocked} · 需登录 {login} · 出错 {error}',
     healthRate: '成功率 {rate}% · 平均 {ms}ms · 最近 {n} 次',
+  rerankLabel: '重排',
+  rerankOff: '关闭',
+  rerankLexical: '词频',
+  breakerLabel: '熔断',
+  breakerHint: '平台连续 3 次失败就暂时跳过，冷却 30 分钟后自动再试（体检成功立即恢复）',
   watchSection: '追踪',
   watchHint: '盯一个话题：每轮只回新出现的链接（按间隔后台自动跑）',
   watchQuery: '要盯的关键词',
@@ -162,6 +167,11 @@ window.__ModuleLoader__.load({
         healthBusy: 'Checking…',
         healthTally: 'Health: ok {ok} · empty {empty} · blocked {blocked} · login {login} · error {error}',
     healthRate: '{rate}% ok · avg {ms}ms · last {n}',
+  rerankLabel: 'Rerank',
+  rerankOff: 'Off',
+  rerankLexical: 'Lexical',
+  breakerLabel: 'Breaker',
+  breakerHint: 'Skip a platform after 3 failures in a row; retry automatically after 30 minutes (a passing health check clears it at once).',
   watchSection: 'Watches',
   watchHint: 'Track a topic: each run only returns links it has never seen before.',
   watchQuery: 'Topic to watch',
@@ -880,6 +890,7 @@ function statusStyle(status) {
       const [catalog, setCatalog] = React.useState([]);
       const [proxy, setProxy] = React.useState('');
       const [proxyNote, setProxyNote] = React.useState('');
+      const [tuning, setTuning] = React.useState({ rerank: 'lexical', breaker: true });
       const [hover, setHover] = React.useState('');
       const [chips, setChips] = React.useState(DEFAULT_CHIPS);
       const [stale, setStale] = React.useState(false);
@@ -1018,6 +1029,16 @@ function statusStyle(status) {
         post('catalog')
           .then((value) => {
             if (alive) applyCatalog(value);
+          })
+          .catch(() => {});
+        post('config', {})
+          .then((value) => {
+            if (!alive || !value) return;
+            setTuning({
+              rerank: value.rerank === 'off' ? 'off' : 'lexical',
+              breaker: value.breaker !== false,
+            });
+            if (typeof value.proxy === 'string') setProxy(value.proxy);
           })
           .catch(() => {});
         return () => {
@@ -1553,6 +1574,19 @@ function statusStyle(status) {
           setProxy((value && value.proxy) || '');
           setProxyNote(t('saved'));
           window.setTimeout(() => setProxyNote(''), 1500);
+        } catch (failure) {
+          setError(String((failure && failure.message) || failure));
+        }
+      };
+
+      const saveTuning = async (patch) => {
+        setTuning((current) => ({ ...current, ...patch }));
+        try {
+          const value = await post('config', { patch: patch });
+          setTuning({
+            rerank: (value && value.rerank) || 'lexical',
+            breaker: !(value && value.breaker === false),
+          });
         } catch (failure) {
           setError(String((failure && failure.message) || failure));
         }
@@ -2402,6 +2436,26 @@ function statusStyle(status) {
                 },
               }),
               h('button', { type: 'button', style: S.button, onClick: saveProxy }, proxyNote || t('save')),
+            ),
+            h(
+              'div',
+              { style: S.foot },
+              h('span', { style: S.hint }, t('rerankLabel')),
+              h(
+                'select',
+                {
+                  value: tuning.rerank,
+                  style: S.footInput,
+                  onChange: (event) => saveTuning({ rerank: event.target.value }),
+                },
+                ['lexical', 'off'].map((mode) => h('option', { key: mode, value: mode }, mode === 'off' ? t('rerankOff') : t('rerankLexical'))),
+              ),
+              h(
+                'label',
+                { style: S.hint, title: t('breakerHint') },
+                h('input', { type: 'checkbox', checked: tuning.breaker, onChange: (event) => saveTuning({ breaker: event.target.checked }) }),
+                t('breakerLabel'),
+              ),
             ),
             h('div', { style: S.resizeGrip, title: t('resizeHint'), onMouseDown: startGesture('resize') }),
           ),
