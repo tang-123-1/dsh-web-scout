@@ -1,5 +1,29 @@
 # 变更记录
 
+## [1.25.0] - 2026-11-17
+
+### 话题追踪（B4）
+
+- 新增 `watches` 状态：`{id, query, platforms, everyMinutes, minNew, lastRunAt, lastCount, lastNew, lastError, lastTop, seen[]}`，写进 `web-scout.json`，最多 12 个、每个最多记 400 条已见 URL。
+- 新增 5 个 op：`watch.list / watch.add / watch.remove / watch.run / watch.clear`；`watch.run` 不带 id 时把当前到期的一次跑完。首轮只建基线（`first:true, added:0`），之后只回新增。
+- 去重键 `watchKey()` 去掉 `#fragment` 与 `utm_*/spm/from/source/ref/scene` 参数并小写化，同一文章的不同追踪链接只算一条。
+- 宿主每 60 秒 `tickWatches()`，到期才跑、一次最多 4 个，失败写 `lastError` 不中断其它 watch。
+- Agent 工具 `web_scout_watch`（list/add/run/remove/clear）与 MCP 工具 `web_scout_watch`；system prompt 加一句「想持续盯一个话题就用 watch」。
+- 面板第三个折叠区「追踪」：关键词 + 间隔 → 添加；每行显示上次运行、新增条数、错误，带运行/删除。
+
+### 修复
+
+- `ScoutStore` 构造函数同时接受文件路径字符串与 `{file}` 对象（之前传对象会让 `flush()` 静默失败）。
+- watch 写入改为写穿（`patch` 后立刻 `flush()`），不再依赖 250 ms 防抖，退出即丢的风险消除。
+- 某一轮没有新增时 `lastTop` 保留上一轮的高亮，面板不会突然空掉。
+
+### 验证
+
+- `_probe/verify-watch.mjs`（假检索）：**11/11**。
+- `_probe/verify-watch-real.mjs`（真 bing 检索 + 落盘/重载）：**4/4**，首次 10 条 844 ms，二次 0 新增 661 ms。
+- `_probe/verify-client-watch.mjs`（vm 里渲染挂件、强制展开追踪区）：**5/5**。
+- `node --test`：11/11。
+
 ## [1.24.0] - 2026-11-17
 
 ### 工程化（A2 + A1）

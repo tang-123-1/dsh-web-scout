@@ -31,6 +31,7 @@
 - **缓存**：内存 LRU + SQLite（`~/.dsh/web-scout-cache.db`），`cacheTtlMs` 可配。
 - **证据包 / 研究模式**：打分取前 N 条 + 摘录 + 覆盖与缺口；多轮检索带时间预算与质量门槛。
 - **可插拔**：外部 provider 丢进 `<profile>/web-scout-providers/` 即生效，热加载。
+- **话题追踪**：盯一个查询词，后台按间隔重跑，每轮只回「没见过」的新链接（v1.25）。
 
 更细的改动看 [CHANGELOG.md](CHANGELOG.md)，接口与字段看下面各节。
 
@@ -271,6 +272,26 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | `verify-evidence.mjs` | 去重、打分排序、每平台配额、预算、摘录命中、缺口、榜单空 query、新鲜度、体检跳过规则 | 19/19 |
 | `verify-evidence-live.mjs` | live 证据包预算/缓存/榜单、体检三站真打、未知平台 skipped | 15/15 |
 | `verify-mcp-117.mjs` | MCP 侧五个工具、证据包预算与缓存、体检、缺 query isError | 11/11 |
+
+### 话题追踪（v1.25）
+
+同一个话题看第二遍时，你想要的是「这几小时又出了什么」，而不是把同一批结果再过一遍。追踪（watch）就是把这个差集记下来：
+
+- **去重键**：URL 去掉 `#fragment` 与 `utm_*`/`spm`/`from`/`source`/`ref`/`scene` 参数后小写比对，同一篇文章挂不同追踪参数只算一条。
+- **基线**：第一次运行只建基线（`added=0, first=true`），不会把整页结果当「新增」砸给你。
+- **调度**：宿主每分钟检查一次，到期的才跑，一次最多 4 个；`everyMinutes` 10–1440，最多 12 个 watch。
+- **落盘**：`web-scout.json` 的 `watches` 字段（含 `seen` 基线，最多 400 条 URL），写穿到磁盘，重启不丢。
+- **面板**：挂件底部「追踪」→ 填关键词 + 间隔 → 添加；每行有上次运行时间、新增条数、运行/删除。
+
+```jsonc
+{"op":"watch.add","query":"cordis 插件","platforms":["bing","csdn"],"everyMinutes":60,"run":true}
+{"op":"watch.list"}                       // → watches[]（dueInMs 告诉你还有多久到期）
+{"op":"watch.run","id":"w..."}            // → added / total / items[]（只含新增）
+{"op":"watch.run"}                        // 不带 id：把当前到期的都跑一遍
+{"op":"watch.remove","id":"w..."}         // 或 {"op":"watch.clear"}
+```
+
+Agent 侧是 `web_scout_watch`，MCP 侧也是 `web_scout_watch`（同一套 action）。
 
 ### 证据包（v1.17）
 
