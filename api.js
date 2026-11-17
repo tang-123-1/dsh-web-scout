@@ -23,6 +23,7 @@ import {
   PLATFORMS,
 } from './engines.js';
 import { openInBrowser } from './open.js';
+import { renderHtml, renderStatus } from './render.js';
 import { mergeCookies } from './browserCookies.js';
 import { checkLogin, loginTarget, cookieMapFromPaste, cookiesForDomain } from './login.js';
 import { ensureBrowserSession, captureBrowserCookies, browserStatus, closeBrowserSession } from './browserAuth.js';
@@ -473,6 +474,10 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
           timeoutMs,
           proxy,
           cookies: settings.cookies || {},
+          render: settings.render !== false,
+          renderPages: settings.renderPages,
+          renderBudgetMs: settings.renderBudgetMs,
+          renderHeadless: settings.renderHeadless === true,
         });
         cache.set(key, result, ttlFrom(settings));
         const hot = decorateHot(result);
@@ -817,6 +822,33 @@ export function createApi({ store, defaults, readMessages, clientGraph, cache: i
       }
       case 'browser.status': {
         return browserStatus();
+      }
+      case 'render.check': {
+        // v1.26 / B1：渲染抓取的自检。available=false 表示没装 Edge/Chrome，entryOnly 站点会一直退回入口行。
+        const status = await renderStatus();
+        const probe = payload.url ? String(payload.url) : '';
+        const headless = payload.headless === true || settings.renderHeadless === true;
+        if (probe === '')
+          return {
+            ...status,
+            renderPages: settings.renderPages,
+            renderBudgetMs: settings.renderBudgetMs,
+            renderHeadless: settings.renderHeadless === true,
+            enabled: settings.render !== false,
+          };
+        if (!/^https?:\/\//i.test(probe)) throw new Error('url 必须是 http(s)');
+        const page = await renderHtml(probe, {
+          timeoutMs: Math.min(20000, Math.max(3000, Number(payload.timeoutMs) || 12000)),
+          headless,
+        });
+        return {
+          ...status,
+          enabled: settings.render !== false,
+          url: page.url,
+          tookMs: page.tookMs,
+          htmlChars: page.html.length,
+          anchors: (page.html.match(/<a\b/gi) || []).length,
+        };
       }
       case 'login.clear': {
         const platform = String(payload.platform || '');

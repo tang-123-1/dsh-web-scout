@@ -16,6 +16,11 @@ const DEFAULTS = {
   maxPlatforms: 10,
   autoOpen: false,
   cacheTtlMs: 6 * 60 * 60 * 1000,
+  // v1.26：entryOnly 站点用插件自管浏览器真渲染，一次搜索最多 renderPages 个、总耗时封顶 renderBudgetMs。
+  render: true,
+  renderPages: 2,
+  renderBudgetMs: 16000,
+  renderHeadless: false,
   defaultPlatforms: ['bing', 'so360', 'csdn', 'juejin', 'toutiao', 'v2ex', 'zhihu', 'bilibili', 'weixin'],
   chips: ['auto', 'bing', 'zhihu', 'bilibili', 'douyin', 'douyinhot', 'csdn', 'juejin'],
   customPlatforms: [],

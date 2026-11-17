@@ -1,5 +1,29 @@
 # 变更记录
 
+## [1.26.0] - 2026-11-17
+
+### 浏览器渲染抓取（B1）
+
+- 新增 `render.js`：复用插件自管浏览器的 CDP（同一 profile、同一登录态），开临时标签 → 导航 → 等正文稳定 → 取 DOM → 关标签。`renderHtml()` 只做这一件事，失败抛错，不吞。
+- `engines.js` 新增 `renderPlatformRows()` / `extractRenderedRows()`：`entryOnly` 平台先试渲染，抽出站内锚点后按标题与 URL slug 过滤相关性；抽不到就退回「站内入口」行，并在 `note` 里写明是「渲染完成但没解析到结果」还是「渲染失败：原因」。
+- 渲染预算：`renderPages`（默认 2）、`renderBudgetMs`（默认 16s），`render:false` 完全关掉；`renderHeadless` 可用无窗口模式渲染。
+- 新增 op `render.check`（带 `url` 时真渲染一次，回 `htmlChars`/`anchors`/`tookMs`，用来排查某个站点为什么抽不到结果）。
+- `store.js` 默认配置加 `render/renderPages/renderBudgetMs/renderHeadless`；`package.json` 的 `files` 加 `render.js`。
+
+### 修复（自测抓出来的）
+
+- 渲染结果最初会在「相关结果不足 3 条」时回落成整页锚点，把「关于我们 / 首页」当搜索结果。改为只回相关命中，空着退回入口行。
+- `RENDER_SKIP_PATH` 只挡了 `/login` 一类路径，站内搜索页自己（`/search/...`）会被当成结果 → 补上 `search|s|so|query|results|find`。
+- 首版固定 `settleMs` 取 DOM，SPA 结果还没填进来；改为「正文长度连续两次不变」才取，Gitee 从 0 条变 10 条。
+- `renderStatus()` 同步包了 async 的 `browserStatus()`，`render.check` 永远回 `browser:""`、`running:false`（即使浏览器已经在跑）→ 改 async 并 `await`；测试加断言「可用时必须报出可执行文件路径」。
+
+### 验证
+
+- `node --test`：**19/19**（新增 `test/render.test.mjs` 8 项：站内过滤、追踪参数去重、无关查询返回空、当前页不自吞、`renderStatus` 结构、无站内地址报错、非 http 拒绝、entryOnly 平台都有 `browser()`）。
+- `_probe/verify-render.mjs`（真浏览器）：**6/6** —— 浏览器可用、Gitee 10 条 / 56 锚点 / 2.3s、`runSearch` 走 `backend=render`、结果非入口行、博客园验证码场景干净退回 `backend=entry`、`render:false` 不渲染。
+- `_probe/verify-render-op.mjs`（`render.check` 走真实 api 层）：**3/3** —— 无 url 只报状态（`browser=msedge.exe`、`running:true`、`port:12929`）、带 url 真渲染（40104 字符 / 105 锚点 / 2.0s）、非 http 被拒。
+- `_probe/verify-render-headless.mjs`：**4/4** —— 关掉非 headless 会话 → `--headless=new` 拉起 → 渲染出 40104 字符 / 2.7s → state 记录新端口 → 用完关掉。
+
 ## [1.25.0] - 2026-11-17
 
 ### 话题追踪（B4）

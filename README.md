@@ -32,6 +32,7 @@
 - **证据包 / 研究模式**：打分取前 N 条 + 摘录 + 覆盖与缺口；多轮检索带时间预算与质量门槛。
 - **可插拔**：外部 provider 丢进 `<profile>/web-scout-providers/` 即生效，热加载。
 - **话题追踪**：盯一个查询词，后台按间隔重跑，每轮只回「没见过」的新链接（v1.25）。
+- **浏览器渲染**：SPA / 要签名的站点用插件自管浏览器真渲染一次再抽结果，失败退回入口行（v1.26）。
 
 更细的改动看 [CHANGELOG.md](CHANGELOG.md)，接口与字段看下面各节。
 
@@ -272,6 +273,26 @@ node <仓库路径>/mcp/server.mjs --help   # 看支持的工具
 | `verify-evidence.mjs` | 去重、打分排序、每平台配额、预算、摘录命中、缺口、榜单空 query、新鲜度、体检跳过规则 | 19/19 |
 | `verify-evidence-live.mjs` | live 证据包预算/缓存/榜单、体检三站真打、未知平台 skipped | 15/15 |
 | `verify-mcp-117.mjs` | MCP 侧五个工具、证据包预算与缓存、体检、缺 query isError | 11/11 |
+
+### 浏览器渲染抓取（v1.26）
+
+有一批站点只对真浏览器给内容：搜索页是 SPA、接口要签名、或者要过一遍 JS 才出结果。以前它们只会回一条「去站内搜」的入口行，现在会先用插件自管的浏览器真渲染一次：
+
+- **复用同一个浏览器**：和「登录态」用的是同一个 profile（`<profile>/web-scout-browser`），cookie 一致，你在浏览器里登录过的站点渲染时就是登录态。
+- **临时标签**：渲染开一个临时标签，取完 DOM 立刻关掉，不动你自己开着的标签。
+- **预算**：一次搜索最多渲染 `renderPages`（默认 2）个 entryOnly 平台，总耗时封顶 `renderBudgetMs`（默认 16s）；超预算/失败就退回入口行，不会拖慢整个搜索。
+- **稳定性判定**：等 `load` 之后再看正文长度，连续两次不变才取 HTML（SPA 的结果常在 load 之后才填进来）。
+- **只回相关的**：渲染出来的锚点先剔掉登录/注册/站内搜索页/当前页，再按查询词（标题或 URL slug）过滤；宁可空着退回入口，也不把「关于我们」当结果。
+
+```jsonc
+{"op":"render.check"}                       // → {available, browser, running, enabled, renderPages}
+{"op":"render.check","url":"https://search.gitee.com/?q=cordis"}  // 真渲染一次，回 htmlChars/anchors/tookMs
+// 配置：{"render":true,"renderPages":2,"renderBudgetMs":16000,"renderHeadless":false}
+```
+
+实测（2026-11-17）：Gitee 站内搜索从「只有入口行」变成 10 条真实仓库结果，约 2.3s；博客园现在要拖滑块验证，渲染能出 HTML 但抽不到结果，于是干净地退回入口行并在 `note` 里说明原因。
+
+没装 Edge/Chrome 时这一层自动跳过（`available:false`），行为与旧版一致。
 
 ### 话题追踪（v1.25）
 

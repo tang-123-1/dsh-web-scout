@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { absolutize, createClient, decodeEntities, hostOf, htmlToText, stripTags, titleOf } from './net.js';
 import { providers } from './providers/registry.js';
 import { externalProviderDir, loadExternalProviders } from './providers/external.js';
+import { renderAvailable, renderHtml } from './render.js';
 
 const enc = (value) => encodeURIComponent(value);
 const UA_MOBILE =
@@ -430,6 +431,80 @@ export function parseAnchors(html, base, limit = 12) {
   }
   return rows;
 }
+
+/**
+ * 浏览器渲染抓取一个 entryOnly 平台（v1.26 / B1）。
+ * 走插件自管的 CDP 浏览器 → 打开站内搜索页 → 等页面稳定 → 取 DOM → 只留站内锚点。
+ * @param {{id: string, zh: string, site?: string, browser: (q: string) => string}} def
+ */
+export async function renderPlatformRows(def, query, options = {}) {
+  if (!def || typeof def.browser !== 'function') throw new Error('这个平台没有站内搜索地址');
+  const limit = Math.min(40, Math.max(1, Number(options.limit) || 20));
+  const timeoutMs = Math.min(20000, Math.max(4000, Number(options.timeoutMs) || 9500));
+  const entry = def.browser(query);
+  const page = await renderHtml(entry, {
+    timeoutMs,
+    settleMs: options.settleMs ?? def.settleMs ?? 800,
+    waitForText: options.waitForText ?? 200,
+    headless: options.headless === true,
+  });
+  const picked = extractRenderedRows(page.html, page.url, def, query, limit);
+  return { rows: picked.rows, url: page.url, tookMs: page.tookMs, anchors: picked.anchors, site: picked.site, rendered: true };
+}
+
+/**
+ * 从渲染后的 DOM 里抽站内结果（纯函数，可离线测试）。
+ * @param {string} html
+ * @param {string} pageUrl 落地地址
+ * @param {{site?: string}} def
+ */
+export function extractRenderedRows(html, pageUrl, def, query, limit = 20) {
+  const site = (def && def.site) || hostOf(pageUrl);
+  const anchors = parseAnchors(html, pageUrl, Math.max(80, limit * 6));
+  const tokens = relevanceTokens(query);
+  const here = (() => {
+    try {
+      const parsed = new URL(pageUrl);
+      return `${parsed.hostname}${parsed.pathname.replace(/\/+$/, '')}`.toLowerCase();
+    } catch {
+      return '';
+    }
+  })();
+  const rows = [];
+  const seen = new Set();
+  for (const anchor of anchors) {
+    const host = hostOf(anchor.url);
+    const inSite = host === site || host.endsWith(`.${site}`);
+    if (!inSite) continue;
+    let parsed;
+    try {
+      parsed = new URL(anchor.url);
+    } catch {
+      continue;
+    }
+    // 登录、注册、站内搜索页本身、以及当前页自己都不是结果
+    if (RENDER_SKIP_PATH.test(parsed.pathname)) continue;
+    if (`${parsed.hostname}${parsed.pathname.replace(/\/+$/, '')}`.toLowerCase() === here && parsed.search === '') continue;
+    const key = dedupeKey(anchor.url, anchor.title);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // 把 URL 的路径也当摘要：英文/品牌名常只出现在 slug 里（gitee 的 /codemonkey2019/cordis）。
+    let slug = '';
+    try {
+      slug = decodeURIComponent(parsed.pathname).replace(/[\/_\-.]+/g, ' ').trim();
+    } catch {
+      slug = parsed.pathname.replace(/[\/_\-.]+/g, ' ').trim();
+    }
+    rows.push({ title: anchor.title, url: anchor.url, snippet: slug });
+  }
+  // 只回和查询词有关的（标题或 slug 命中）。宁可空着让上游退回「站内入口」，
+  // 也不要把「关于我们 / 首页」这类导航链接冒充搜索结果。
+  const relevant = keepRelevant(rows, tokens, query);
+  return { rows: relevant.slice(0, limit), anchors: anchors.length, site, matched: relevant.length, scanned: rows.length };
+}
+
+const RENDER_SKIP_PATH =
+  /^\/(login|signin|sign-in|signup|sign-up|register|passport|account\/(login|register)|user\/login|search|s|so|query|results?|find)(\/|$)/i;
 
 async function fetchCustom({ client, def, query, limit }) {
   const url = customUrl(def.url, query);
@@ -2155,6 +2230,17 @@ export async function runSearch(options) {
   const client = createClient({ proxy: options.proxy, cookies: options.cookies, timeoutMs });
   const perPlatform = [];
   const errors = [];
+  // 渲染预算（v1.26 / B1）：一次搜索最多渲染 renderPages 个 entryOnly 平台，总耗时封顶 renderBudgetMs。
+  // entryOnly 站点并发跑，claimRender 是同步的，所以不需要额外的锁。
+  const renderPagesCap = options.render === false ? 0 : Math.min(4, Math.max(0, Number(options.renderPages ?? 2)));
+  const renderDeadline = Date.now() + Math.min(30000, Math.max(3000, Number(options.renderBudgetMs) || 16000));
+  let renderLeft = renderPagesCap > 0 && renderAvailable() ? renderPagesCap : 0;
+  const renderNotes = new Map();
+  const claimRender = () => {
+    if (renderLeft <= 0 || Date.now() >= renderDeadline) return false;
+    renderLeft -= 1;
+    return true;
+  };
 
   const tasks = ids.map(async (id) => {
     const def = PLATFORMS.get(id);
@@ -2164,16 +2250,54 @@ export async function runSearch(options) {
     const platformQuery = platformQueryFor(def, query);
     const platformTimeout = Math.min(timeoutMs, def.timeoutCap || (def.needsTunnel ? 6000 : timeoutMs));
     if (def.entryOnly === true) {
+      // 先试真渲染（v1.26 / B1）：复用插件自管浏览器的登录态开一个临时标签，
+      // 把站内搜索页渲染出来再抽锚点；失败或没结果才退回「给站内入口」。
+      const entryUrl = def.browser(query);
+      if (claimRender()) {
+        try {
+          const rendered = await renderPlatformRows(def, query, {
+            limit: fetchLimit,
+            timeoutMs: Math.min(12000, Math.max(6000, platformTimeout)),
+            headless: options.renderHeadless === true,
+          });
+          const items = keepRelevant(
+            rendered.rows
+              .map((row) => result(id, def, row))
+              .filter((item) => !isLandingPage(item.url) && !isJunkResult(item, query)),
+            relevanceTokens(query),
+            query,
+          ).slice(0, limit);
+          if (items.length > 0) {
+            return {
+              id,
+              label: def.zh,
+              status: 'ok',
+              note: `浏览器渲染 ${rendered.tookMs}ms${rendered.anchors > rendered.rows.length ? ` · 解析 ${rendered.anchors} 个链接` : ''}`,
+              count: items.length,
+              browser: browserUrl,
+              backend: 'render',
+              kind: kindOf(def),
+              rendered: true,
+              login: def.needsLogin !== undefined,
+              results: items,
+            };
+          }
+          renderNotes.set(id, '渲染完成但没解析到结果');
+        } catch (error) {
+          renderNotes.set(id, `渲染失败：${summarizeError(error)}`);
+        }
+      }
       // 这类站点没有可抓取的服务端搜索（SPA / 需要签名 / 只对浏览器开放），与其白等一次
       // 搜索引擎再被判「忽略 site:」，不如直接把站内搜索入口交出去，并把原因写清楚。
-      const entryUrl = def.browser(query);
+      const entryWhy = def.needsTunnel === true
+        ? '该站点没有可抓取的服务端搜索，且当前网络需要代理；已给站内入口'
+        : '该站点没有可抓取的服务端搜索（浏览器渲染/需要签名），已给站内入口';
+      const renderNote = renderNotes.get(id) || '';
       return {
         id,
         label: def.zh,
         status: 'empty',
-        note: def.needsTunnel === true
-          ? '该站点没有可抓取的服务端搜索，且当前网络需要代理；已给站内入口'
-          : '该站点没有可抓取的服务端搜索（浏览器渲染/需要签名），已给站内入口',
+        note: renderNote === '' ? entryWhy : `${entryWhy}（${renderNote}）`,
         count: 1,
         browser: browserUrl,
         backend: 'entry',
